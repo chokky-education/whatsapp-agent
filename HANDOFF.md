@@ -6,9 +6,9 @@ text instead of appending. Only the **Log** grows (newest first, one line each).
 ## Status (2026-11-09)
 
 Working:
-- Live bot restarted with the user's authorization on 2026-11-09 through the existing launchd job (PID 72449).
-  The previous process exited, one replacement process is running, and WhatsApp reconnected without a QR code.
-  This loads Phase 1 (memory provenance/revisions), Phase 2 (Sunburst render & versioning), and Bugfix for immediate media download on direct caption messages & recent image fallback; no manual probe messages sent.
+- Live bot restarted with the user's authorization on 2026-11-09 01:37 via `launchctl kickstart -k` (PID 83903):
+  old process gone, one instance, WhatsApp reconnected without QR, `client_renders` migrated on the live DB (3 rows kept).
+  Runs the render redesign below. No test messages were sent to the group.
 - Bot (`npm start`): stores group messages, describes images/PDFs, `/สรุป` and scheduled summaries.
 - Phase 1 (Memory Provenance & Revisions):
   - `client_notes` tracks `current_revision_id`, `revision_count`, `updated_by`, `updated_at`.
@@ -44,8 +44,7 @@ Git: `main`, remote `origin` = https://github.com/chokky-education/whatsapp-agen
 
 ## In progress
 
-- Render redesign committed and fast-forwarded into `main` (not pushed). The live bot still runs the old code until an
-  authorized restart; on restart `client_renders` is rebuilt once (rows and ids kept).
+- (nothing in progress) Render redesign is in `main` (not pushed) and live since the 01:37 restart on 2026-11-09.
 
 ## Next steps / ideas
 
@@ -78,6 +77,7 @@ Git: `main`, remote `origin` = https://github.com/chokky-education/whatsapp-agen
 
 ## Log
 
+- 2026-11-09 — User authorized restart: kickstart at 01:37, PID 83903, clean reconnect, live DB migration verified by schema/count only. Note: the old code had crashed again on a network drop before 01:28 (fixed by the new guard).
 - 2026-11-09 — Redesigned renders after the user found them unusable (output ignored the sketch and invented a building): code-routed "บอท เรนเดอร์", reply-to-edit, ask-then-wait for sketch, no client binding, layout-preserving prompt without dossier data, output cropped back to the sketch's exact size (sharp pad->render->crop), input_fidelity high, no daily cap by default, /เรนเดอร์ usage counts, network-crash guard. New src/render.js; client_renders migration; removed render_client_image AI action and dossier render section. 62 tests pass. Not live. One real-model check afterwards kept the layout (see Known issues).
 - 2026-11-09 — Fixed image rendering source capture & restarted launchd (PID 72449): resolved race condition where incoming image caption messages triggered `handleRequest` before background `describeLater` downloaded the media (causing `sourceMediaPath` to be null and falling back to text-to-image). Added `saveIncomingMedia` for immediate synchronous media download on incoming image messages, recent group image fallback (within 30 mins) if user says "จากภาพ/สเก็ต" without quoting, and explicit guard against text-to-image when image is missing. Added prompt steering so Sunburst strictly preserves building layout. All 54 tests pass (`npm test`).
 - 2026-11-09 — User authorized live restart. Restarted launchd service (`com.whatsapp-group-summarizer.bot`, new PID 69796); verified old process exited, single instance running, and clean WhatsApp connection without QR. Phase 1 & 2 live in production.
