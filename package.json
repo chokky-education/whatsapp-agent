@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-group-summarizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp group bot that summarizes work chats with Claude",
+  "scripts": {
+    "start": "node src/bot.js",
+    "summarize-export": "node src/export-cli.js",
+    "test": "node --test test/*.test.js",
+    "index": "node scripts/index.mjs"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "adm-zip": "^0.6.1",
+    "baileys": "^7.0.0-rc14",
+    "dotenv": "^18.0.9",
+    "node-cron": "^4.6.0",
+    "openai": "^7.53.0",
+    "pino": "^10.4.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
