@@ -4,10 +4,12 @@
 // has Claude describe images/PDFs as they arrive, and posts summaries on command or on a schedule.
 
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import makeWASocket, {
   Browsers,
+  BufferJSON,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
@@ -25,8 +27,9 @@ import { config } from './config.js';
 import * as db from './db.js';
 import { describeMedia } from './describe.js';
 import { summarize } from './summarize.js';
-import { explainError, hasCredentials, NO_KEY_MESSAGE } from './ai.js';
+import { explainError, hasCredentials, NO_KEY_MESSAGE, renderImage } from './ai.js';
 import * as tasks from './tasks.js';
+import { INTRO } from './about.js';
 
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'error' });
@@ -38,26 +41,45 @@ fs.mkdirSync(config.mediaDir, { recursive: true });
 let sock;
 const groupCache = new Map(); // jid -> metadata
 const sentByBot = new Set(); // message ids the bot sent, so they never end up in a summary
+// Serialize chat handlers and scheduled mutations so erasure cannot race an AI response.
+let operations = Promise.resolve();
+function serialize(job) {
+  const next = operations.then(job);
+  operations = next.catch(() => {});
+  return next;
+}
+const deletionRequests = new Map(); // one short-lived challenge per group
 const pendingMedia = new Map(); // groupJid -> Set<Promise>
 
 const HELP = `🤖 *วิธีใช้บอท*
 
 *คุยกับบอท* — แท็ก @บอท หรือขึ้นต้นด้วย "บอท" แล้วพิมพ์เหมือนคุยกับคน เช่น
+- บอท เพิ่มลูกค้า คุณสมชาย (บ้านลาดพร้าว) งบ 8 ล้าน เฟสออกแบบ
+- บอท จำไว้ว่า บ้านลาดพร้าว เปลี่ยนกระเบื้องห้องน้ำเป็นสีเทาด้าน
 - บอท พรุ่งนี้บ่าย 2 เตือน @Somchai ส่ง Render
 - บอท ทุกวันจันทร์ 9 โมง เตือนทุกคนอัปเดตงาน
 - บอท งาน #3 เสร็จแล้ว / เลื่อนงาน #3 เป็นศุกร์นี้
-- บอท ลิงก์ Drive ล่าสุดอยู่ไหน
+- บอท ลิงก์ Drive ล่าสุดอยู่ไหน / บ้านลาดพร้าวขอแก้อะไรบ้าง
+- บอท เรนเดอร์บ้านลาดพร้าวจากภาพนี้ ผนังขาว หลังคาเทา ตามสเปกในแฟ้ม
+- บอท แก้ภาพบ้านลาดพร้าว เวอร์ชัน 1 ให้ผนังเป็นสีครีม
+- /ลบข้อมูล — แอดมินลบข้อมูลที่บอทเก็บของกลุ่มนี้ (ต้องยืนยัน)
 
 *ตอบข้อความเตือน* — ตอบกลับว่า "เสร็จแล้ว" หรือกด ✅ เพื่อปิดงาน, "เลื่อน 1 ชม." เพื่อเลื่อน
 
 *คำสั่ง*
+- */ลูกค้า* — ดูรายชื่อลูกค้าทั้งหมด (สูงสุด ${config.maxClients} ราย) · */ลูกค้า ชื่อบ้าน* — ดูแฟ้มข้อมูลและงานค้างรายบ้าน
+- */โน้ต 3* — ดูบันทึก #N3 (ฉบับปัจจุบัน) · */ที่มา 3* — ดูข้อความต้นทาง · */ประวัติโน้ต 3* — ดูประวัติการแก้ไข
+- */แก้โน้ต 3 ข้อความใหม่* — แก้ไขบันทึก #N3 โดยเก็บประวัติเดิม
+- */ลบโน้ต 3* — ลบบันทึก #N3 ในแฟ้มลูกค้า
+- */เรนเดอร์ ชื่อบ้าน* — ดูประวัติภาพเรนเดอร์และเวอร์ชันทั้งหมดของบ้าน (โควตาสูงสุด ${config.maxRendersPerDay} ภาพ/วัน)
 - */งาน* — งานที่ยังเปิดอยู่ทั้งหมด
 - */เสร็จ 3* — ปิดงาน #3 · */ยกเลิก 3* — ยกเลิกงาน #3
 - */สรุป* — สรุปแชทตั้งแต่ครั้งล่าสุด · */สรุป 2 วัน* — ย้อนหลังตามช่วงเวลา
 - */สถิติ* — งานที่ปิดได้ใน 7 วัน
+- */แนะนำ* — บอทแนะนำตัว ทำอะไรได้ ข้อจำกัด และเรื่องข้อมูล
 - */ช่วย* — แสดงข้อความนี้
 
-บอทจดงานจากแชทให้เอง และสรุปงานของวันนี้ให้ทุกเช้า`;
+บอทจดงานและอัปเดตแฟ้มลูกค้าจากแชทให้เอง และสรุปงานของวันนี้ให้ทุกเช้า`;
 
 // ---------- helpers ----------
 
@@ -163,6 +185,106 @@ async function send(jid, text, { mentions = [], taskId = null, reminderId = null
   );
 }
 
+async function sendImage(jid, buffer, { caption = null, mentions = [], renderId = null, quoted = null } = {}) {
+  const messageId = generateMessageIDV2(sock.user?.id);
+  sentByBot.add(messageId);
+  db.recordBotMessage(messageId, jid, { renderId, kind: 'render' });
+  return sock.sendMessage(
+    jid,
+    {
+      image: buffer,
+      caption: caption || undefined,
+      mentions: [...new Set(mentions.filter(Boolean))],
+    },
+    { messageId, ...(quoted ? { quoted } : {}) },
+  );
+}
+
+// Background queue for architectural image generation so it never blocks chat or reminders.
+let renderRunning = false;
+const renderQueue = [];
+
+function enqueueRender(job) {
+  renderQueue.push(job);
+  pumpRenders();
+}
+
+async function pumpRenders() {
+  if (renderRunning || !renderQueue.length) return;
+  renderRunning = true;
+  const job = renderQueue.shift();
+  try {
+    await executeRenderJob(job);
+  } catch (err) {
+    log('เรนเดอร์ภาพไม่สำเร็จ:', explainError(err));
+    await send(job.groupJid, `⚠️ ไม่สามารถเรนเดอร์ภาพ ${job.client?.name || ''} ได้: ${explainError(err)}`).catch(() => {});
+  } finally {
+    renderRunning = false;
+    pumpRenders();
+  }
+}
+
+async function flushRenders(groupJid = null) {
+  while (renderQueue.length || renderRunning) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+async function executeRenderJob(job) {
+  if (job.groupJid && db.deletedThrough(job.groupJid) >= Math.floor(Date.now() / 1000)) return;
+
+  let sourceImage = null;
+  if (job.sourceMediaPath && fs.existsSync(job.sourceMediaPath)) {
+    const buf = fs.readFileSync(job.sourceMediaPath);
+    const ext = path.extname(job.sourceMediaPath).toLowerCase() || '.png';
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    sourceImage = {
+      buffer: buf,
+      mime,
+      filename: path.basename(job.sourceMediaPath),
+    };
+  }
+
+  const res = await renderImage({
+    prompt: job.fullPrompt,
+    sourceImage,
+    quality: config.imageQuality,
+    size: '1024x1024',
+  });
+
+  const groupFolder = job.groupJid.split('@')[0];
+  const dir = path.join(config.mediaDir, groupFolder);
+  fs.mkdirSync(dir, { recursive: true });
+  const ext = res.mime === 'image/jpeg' ? 'jpg' : res.mime === 'image/webp' ? 'webp' : 'png';
+
+  const renders = db.clientRenders(job.client.id, job.groupJid);
+  const nextVersion = (renders.length ? Math.max(...renders.map((r) => r.version_no)) : 0) + 1;
+  const outputFileName = `render_${job.client.id}_v${nextVersion}.${ext}`;
+  const outputMediaPath = path.join(dir, outputFileName);
+  fs.writeFileSync(outputMediaPath, res.buffer);
+
+  const { id: renderId, versionNo } = db.addClientRender({
+    groupJid: job.groupJid,
+    clientId: job.client.id,
+    parentVersion: job.parentVersion,
+    sourceMsgId: job.sourceMsgId,
+    sourceMediaPath: job.sourceMediaPath,
+    outputMediaPath,
+    prompt: job.instruction,
+    specSnapshot: job.specSnapshot,
+    model: res.model || config.openaiImageModel,
+    status: 'done',
+    createdBy: job.requestedBy,
+  });
+
+  const caption = tasks.formatRenderCaption(job.client, versionNo, job);
+  await sendImage(job.groupJid, res.buffer, {
+    caption,
+    renderId,
+    quoted: job.quotedMsgRef || null,
+  });
+}
+
 // ---------- people & addressing ----------
 
 const userPart = (jid) => (jid || '').split('@')[0].split(':')[0];
@@ -175,7 +297,19 @@ function botIds() {
 function isAddressed(text, ctx) {
   if ((ctx?.mentionedJid || []).some((j) => botIds().includes(userPart(j)))) return true;
   const t = (text || '').trim().toLowerCase();
-  return config.botNames.some((n) => t.startsWith(n.toLowerCase()) || t.startsWith('@' + n.toLowerCase()));
+  return config.botNames.some((n) => {
+    const name = n.toLowerCase();
+    const rest = t.startsWith('@' + name) ? t.slice(name.length + 1) : t.startsWith(name) ? t.slice(name.length) : null;
+    // "บอท พรุ่งนี้เตือน…" talks TO the bot; "บอทนี้เจ๋งดี" / "bot ตัวนี้…" talks ABOUT it.
+    return rest !== null && !/^\s*(นี้|นี่|นั้น|นั่น|ตัว|เขา|มัน|ของ)/.test(rest) && !/^[a-z0-9]/i.test(rest);
+  });
+}
+
+// "ai นี้เก็บข้อมูลไว้ไหน", "บอทนี้ทำอะไรได้บ้าง" — a question about the bot, even without a tag.
+const ABOUT_BOT = /(บอท|\bbot\b|\bbotty\b|เอไอ|\bai\b)/i;
+const QUESTION = /(\?|ไหม|มั้ย|มัย|หรอ|เหรอ|รึเปล่า|หรือเปล่า|อะไร|ยังไง|อย่างไร|ทำไม|เท่าไหร่|กี่|ที่ไหน|ใคร)/;
+function isQuestionAboutBot(text) {
+  return config.answerBotQuestions && ABOUT_BOT.test(text || '') && QUESTION.test(text || '');
 }
 
 function participantIds(meta) {
@@ -217,28 +351,28 @@ function scheduleTaskSync(groupJid) {
   clearTimeout(syncTimers.get(groupJid));
   syncTimers.set(
     groupJid,
-    setTimeout(async () => {
+    setTimeout(() => serialize(async () => {
       syncTimers.delete(groupJid);
       try {
         await waitForMedia(groupJid);
         const meta = await groupMeta(groupJid);
         const result = await tasks.syncTasks(groupJid, peopleIn(meta), (n) => resolvePerson(meta, n));
         if (!result) return;
-        if (result.added.length || result.completed.length)
-          log(`📌 ${meta?.subject}: งานใหม่ ${result.added.length}, ปิด ${result.completed.length}`);
+        if (result.added.length || result.completed.length || result.notesAdded?.length)
+          log(`📌 ${meta?.subject}: งานใหม่ ${result.added.length}, ปิด ${result.completed.length}, โน้ตลูกค้า ${result.notesAdded?.length || 0}`);
         const notice = config.announceTasks && tasks.syncNotice(result);
         if (notice) await send(groupJid, notice, { kind: 'sync' });
       } catch (err) {
         log('จดงานอัตโนมัติไม่สำเร็จ:', explainError(err));
       }
-    }, config.autoTaskQuietMinutes * 60_000),
+    }), config.autoTaskQuietMinutes * 60_000),
   );
 }
 
 const DONE_WORDS = /^(✅|✔️|☑️|👍|เสร็จ|เรียบร้อย|ทำแล้ว|ส่งแล้ว|done|ok แล้ว)/i;
 
 /** Someone talked to the bot (mention, its name, or a reply to one of its messages). */
-async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, botMsg, quotedText }) {
+async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, botMsg, quotedText, quotedMsgId = null }) {
   const task = botMsg?.task_id ? db.getTask(botMsg.task_id) : null;
   const reminder = botMsg?.reminder_id ? db.getReminder(botMsg.reminder_id) : null;
 
@@ -256,21 +390,161 @@ async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, b
   }
 
   const cleaned = config.botNames.reduce((t, n) => t.replace(new RegExp('^@?' + n + '[\\s,:]*', 'i'), ''), text.trim());
+  if (/^(?:ลบข้อมูล|ล้างข้อมูล)(?:\s|ทั้งหมด|กลุ่มนี้|$)/.test(cleaned)) {
+    return handleDeletion(groupJid, senderJid, '');
+  }
+  let quotedMsg = quotedMsgId ? db.getMessage(groupJid, quotedMsgId) : null;
+  if (quotedMsg && quotedMsg.kind === 'image' && (!quotedMsg.media_path || !fs.existsSync(quotedMsg.media_path))) {
+    await waitForMedia(groupJid, 10_000);
+    quotedMsg = db.getMessage(groupJid, quotedMsgId);
+  }
+  const botMsgForQuoted = quotedMsgId ? db.botMessage(quotedMsgId) : null;
+  const quotedRender =
+    (botMsg?.render_id && db.getClientRender(botMsg.render_id)) ||
+    (botMsgForQuoted?.render_id && db.getClientRender(botMsgForQuoted.render_id)) ||
+    null;
+
+  let sourceMediaPath = null;
+  let sourceMsgId = null;
+  if (quotedMsg?.media_path && fs.existsSync(quotedMsg.media_path)) {
+    sourceMediaPath = quotedMsg.media_path;
+    sourceMsgId = quotedMsg.id;
+  } else if (quotedRender) {
+    sourceMediaPath = quotedRender.output_media_path || quotedRender.source_media_path;
+  } else {
+    const currentMsg = m?.key?.id ? db.getMessage(groupJid, m.key.id) : null;
+    if (currentMsg?.media_path && fs.existsSync(currentMsg.media_path)) {
+      sourceMediaPath = currentMsg.media_path;
+      sourceMsgId = currentMsg.id;
+    }
+  }
+
+  // Fallback: if user asked to render from an image/sketch without quoting or on a separate message
+  if (!sourceMediaPath && !quotedRender && /(จากภาพ|จากรูป|จากไฟล์|สเก็ต|sketch|ภาพนี้|รูปนี้|ตัวนี้|แบบนี้)/i.test(text)) {
+    const recentImages = db
+      .getMessages(groupJid, Math.floor(Date.now() / 1000) - 1800, Math.floor(Date.now() / 1000))
+      .filter((r) => r.kind === 'image' && r.media_path && fs.existsSync(r.media_path));
+    const latest = recentImages.pop();
+    if (latest) {
+      sourceMediaPath = latest.media_path;
+      sourceMsgId = latest.id;
+    }
+  }
+
   const res = await tasks.handleRequest({
     groupJid,
     senderName,
     senderJid,
     text: cleaned || text,
-    quoted: botMsg ? { text: quotedText, task, reminder } : null,
+    messageId: m?.key?.id || null,
+    quotedMsg,
+    quoted: botMsg ? { text: quotedText, task, reminder } : quotedText ? { text: quotedText, task: null, reminder: null } : null,
+    quotedRender,
+    sourceMediaPath,
+    sourceMsgId,
     people: peopleIn(meta),
     resolve: (n) => resolvePerson(meta, n),
   });
+  if (res.renderJobs?.length) {
+    for (const job of res.renderJobs) {
+      job.quotedMsgRef = m;
+      enqueueRender(job);
+    }
+  }
   return send(groupJid, res.text, { mentions: res.mentions, quoted: m, kind: 'reply' });
+}
+
+// Save media file to disk immediately so requests and commands can access it right away.
+async function saveIncomingMedia(m, { groupJid, kind, mime }) {
+  const id = m?.key?.id;
+  if (!id) return null;
+  const ext = kind === 'image' ? (mime.split('/')[1] || 'jpg').split(';')[0] : 'pdf';
+  const dir = path.join(config.mediaDir, groupJid.split('@')[0]);
+  const defaultFile = path.join(dir, `${id}.${ext}`);
+  const existing = db.getMessage(groupJid, id);
+  if (existing?.media_path && fs.existsSync(existing.media_path)) return existing.media_path;
+  if (fs.existsSync(defaultFile)) {
+    db.setMediaPath(id, defaultFile);
+    return defaultFile;
+  }
+
+  try {
+    const buffer = await downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock?.updateMediaMessage });
+    if (!buffer) return null;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(defaultFile, buffer);
+    db.setMediaPath(id, defaultFile);
+    return defaultFile;
+  } catch (err) {
+    log('ดาวน์โหลดรูป/ไฟล์ทันทีไม่สำเร็จ:', explainError(err));
+    return null;
+  }
+}
+
+// Download an image/PDF and let the AI describe it (two at a time).
+function describeLater(m, { groupJid, groupName, senderName, ts, kind, mime, text }) {
+  const id = m.key.id;
+  const job = enqueue(async () => {
+    const ext = kind === 'image' ? (mime.split('/')[1] || 'jpg').split(';')[0] : 'pdf';
+    const dir = path.join(config.mediaDir, groupJid.split('@')[0]);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${id}.${ext}`);
+    let buffer;
+    if (fs.existsSync(file)) {
+      buffer = fs.readFileSync(file);
+    } else {
+      buffer = await downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+      fs.writeFileSync(file, buffer);
+      db.setMediaPath(id, file);
+    }
+
+    const recentChat = db
+      .getMessages(groupJid, ts - 3600, ts)
+      .filter((r) => r.kind === 'text' && r.id !== id)
+      .slice(-6)
+      .map((r) => `${r.sender_name}: ${r.text}`)
+      .join('\n');
+    const desc = await describeMedia(buffer, kind === 'image' ? mime.split(';')[0] : 'application/pdf', {
+      caption: text,
+      sender: senderName,
+      recentChat,
+    });
+    db.setMediaMsg(id, null);
+    if (desc) {
+      db.setMediaDesc(id, desc);
+      log(`🖼️  ${groupName} / ${senderName}: ${desc.slice(0, 80)}`);
+    }
+  });
+  trackMedia(groupJid, job);
+}
+
+/**
+ * Should an incoming message get a reply?
+ * "notify" = arrived live. "append" = sent by this account from the phone, or delivered late
+ * because the bot was offline; late ones from the last OFFLINE_REPLY_HOURS still get answered.
+ */
+function upsertFlags(type, m) {
+  const age = Date.now() / 1000 - Number(m.messageTimestamp || 0);
+  const fresh = age < 120;
+  const late = type === 'append' && !m.key?.fromMe && !fresh && age < config.offlineReplyHours * 3600;
+  return { live: type === 'notify' || (type === 'append' && fresh) || late, late };
+}
+
+// A command/request sent while the bot was offline: say why the answer is late.
+async function handleLateNotice(m, groupJid, ts, text, ctx) {
+  const botMsg = ctx?.stanzaId ? db.botMessage(ctx.stanzaId) : null;
+  const forBot = text && (text.startsWith('/') || botMsg || isAddressed(text, ctx) || isQuestionAboutBot(text));
+  if (!forBot) return;
+  await send(groupJid, `⏳ ขอโทษที่ตอบช้าครับ ตอนที่ส่งข้อความนี้ (${tasks.fmtWhen(ts)}) บอทออฟไลน์อยู่`, { quoted: m, kind: 'late' }).catch(() => {});
 }
 
 // ---------- incoming messages ----------
 
-async function handleMessage(m, { live }) {
+function handleMessage(m, flags) {
+  return serialize(() => processMessage(m, flags));
+}
+
+async function processMessage(m, { live, late = false }) {
   const groupJid = m.key?.remoteJid;
   if (!groupJid || !isJidGroup(groupJid) || !m.message) return;
 
@@ -310,8 +584,9 @@ async function handleMessage(m, { live }) {
 
   const id = m.key.id;
   const ts = Number(m.messageTimestamp) || Math.floor(Date.now() / 1000);
+  if (ts <= db.deletedThrough(groupJid)) return;
   const fromBot =
-    sentByBot.has(id) || Boolean(db.botMessage(id)) || (m.key.fromMe && /^(📋|🤖|⏰|📌|☀️|✅|💤|📅|🗑️|↩️|⚠️)/u.test(text || ''));
+    sentByBot.has(id) || Boolean(db.botMessage(id)) || (m.key.fromMe && /^(📋|🤖|⏰|📌|☀️|✅|💤|📅|🗑️|↩️|⚠️|🏗️|🏠|🗂️|📦)/u.test(text || ''));
 
   const isNew = db.saveMessage({
     id,
@@ -331,36 +606,16 @@ async function handleMessage(m, { live }) {
   const mime = content[type]?.mimetype || '';
   const describable = kind === 'image' || (kind === 'document' && mime === 'application/pdf');
   const recent = ts > Date.now() / 1000 - 3 * 86400; // don't burn tokens on old history
-  if (isNew && describable && config.describeMedia && recent) {
-    const job = enqueue(async () => {
-      const buffer = await downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-      const ext = kind === 'image' ? (mime.split('/')[1] || 'jpg').split(';')[0] : 'pdf';
-      const dir = path.join(config.mediaDir, groupJid.split('@')[0]);
-      fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `${id}.${ext}`);
-      fs.writeFileSync(file, buffer);
-      db.setMediaPath(id, file);
-
-      const recentChat = db
-        .getMessages(groupJid, ts - 3600, ts)
-        .filter((r) => r.kind === 'text' && r.id !== id)
-        .slice(-6)
-        .map((r) => `${r.sender_name}: ${r.text}`)
-        .join('\n');
-      const desc = await describeMedia(buffer, kind === 'image' ? mime.split(';')[0] : 'application/pdf', {
-        caption: text,
-        sender: senderName,
-        recentChat,
-      });
-      if (desc) {
-        db.setMediaDesc(id, desc);
-        log(`🖼️  ${groupName} / ${senderName}: ${desc.slice(0, 80)}`);
-      }
-    });
-    trackMedia(groupJid, job);
+  if (isNew && describable && recent) {
+    await saveIncomingMedia(m, { groupJid, kind, mime });
+    if (config.describeMedia) {
+      db.setMediaMsg(id, JSON.stringify(m, BufferJSON.replacer)); // lets a restart retry it
+      describeLater(m, { groupJid, groupName, senderName, ts, kind, mime, text });
+    }
   }
 
-  if (!live || fromBot) return;
+  if (!live || fromBot || !isNew) return;
+  if (late) await handleLateNotice(m, groupJid, ts, text, ctx);
 
   if (text?.startsWith('/')) {
     await handleCommand(groupJid, groupName, text.trim(), { m, meta, senderName, senderJid }).catch((err) =>
@@ -370,9 +625,9 @@ async function handleMessage(m, { live }) {
   }
 
   const botMsg = ctx?.stanzaId ? db.botMessage(ctx.stanzaId) : null;
-  if (text && (botMsg || isAddressed(text, ctx))) {
+  if (text && (botMsg || isAddressed(text, ctx) || isQuestionAboutBot(text))) {
     db.markToBot(id);
-    await handleRequest(m, { groupJid, meta, senderName, senderJid, text, botMsg, quotedText }).catch((err) =>
+    await handleRequest(m, { groupJid, meta, senderName, senderJid, text, botMsg, quotedText, quotedMsgId: ctx?.stanzaId || null }).catch((err) =>
       send(groupJid, `🤖 ทำไม่สำเร็จ: ${explainError(err)}`),
     );
     return;
@@ -413,11 +668,84 @@ async function handleCommand(groupJid, groupName, text, { m, meta, senderName, s
   const arg = rest.join(' ');
   const now = Math.floor(Date.now() / 1000);
 
+  if (cmd === '/ลบข้อมูล') return handleDeletion(groupJid, senderJid, arg);
+
   if (['/ช่วย', '/help'].includes(cmd)) return send(groupJid, HELP);
+
+  if (['/แนะนำ', '/about', '/intro'].includes(cmd)) return send(groupJid, INTRO, { kind: 'intro' });
+
+  if (['/ลูกค้า', '/client', '/clients'].includes(cmd)) {
+    if (!arg) return send(groupJid, tasks.formatClientList(groupJid), { kind: 'clients' });
+    if (/^(เพิ่ม|add)\s+/i.test(arg)) {
+      return handleRequest(m, {
+        groupJid,
+        meta,
+        senderName,
+        senderJid,
+        text: 'เพิ่มลูกค้า ' + arg.replace(/^(เพิ่ม|add)\s+/i, ''),
+        botMsg: null,
+        quotedText: null,
+      });
+    }
+    return send(groupJid, tasks.formatClientDossier(groupJid, arg), { kind: 'client' });
+  }
+
+  if (['/โน้ต', '/note'].includes(cmd)) {
+    const id = Number((arg.match(/\d+/) || [])[0]);
+    return send(groupJid, tasks.formatClientNote(groupJid, id), { kind: 'note' });
+  }
+
+  if (['/ที่มา', '/source'].includes(cmd)) {
+    const id = Number((arg.match(/\d+/) || [])[0]);
+    return send(groupJid, tasks.formatNoteSources(groupJid, id), { kind: 'source' });
+  }
+
+  if (['/ประวัติโน้ต', '/history'].includes(cmd)) {
+    const id = Number((arg.match(/\d+/) || [])[0]);
+    return send(groupJid, tasks.formatNoteHistory(groupJid, id), { kind: 'history' });
+  }
+
+  if (['/แก้โน้ต', '/editnote'].includes(cmd)) {
+    const mArg = arg.match(/^#?n?(\d+)\s+(.+)$/is);
+    if (!mArg) return send(groupJid, '🤖 พิมพ์เลขโน้ตตามด้วยข้อความใหม่ เช่น /แก้โน้ต 12 กระเบื้องสีเทาด้าน');
+    const noteId = Number(mArg[1]);
+    const res = db.editClientNote(noteId, {
+      groupJid,
+      text: mArg[2].trim(),
+      updatedBy: senderName,
+      kind: 'correction',
+      sourceMessageIds: [m?.key?.id].filter(Boolean),
+    });
+    if (!res.ok) return send(groupJid, '🤖 ไม่พบบันทึกเลขนี้ ดูเลข #N ได้ด้วย /ลูกค้า ชื่อบ้าน');
+    const c = db.getClient(res.note.client_id);
+    return send(
+      groupJid,
+      `✏️ แก้ไขบันทึก #N${res.note.id} (ฉบับที่ ${res.revisionNo}) ของ *${c?.name || '-'}* [${tasks.CATEGORY_LABEL[res.note.category] || res.note.category}]: ${res.note.text}`,
+    );
+  }
+
+  if (['/ลบโน้ต', '/delnote'].includes(cmd)) {
+    const id = Number((arg.match(/\d+/) || [])[0]);
+    const note = id ? db.getClientNote(id) : null;
+    if (!note || note.group_jid !== groupJid) return send(groupJid, '🤖 ไม่พบบันทึกเลขนี้ ดูเลข #N ได้ด้วย /ลูกค้า ชื่อบ้าน');
+    db.deleteClientNote(note.id, groupJid);
+    return send(groupJid, `🗑️ ลบบันทึก #N${note.id}: ${note.text}`);
+  }
+
+  if (['/เรนเดอร์', '/render', '/renders'].includes(cmd)) {
+    return send(groupJid, tasks.formatClientRenders(groupJid, arg), { kind: 'renders' });
+  }
 
   if (['/งาน', '/task'].includes(cmd)) return send(groupJid, tasks.formatTaskList(groupJid), { kind: 'list' });
 
   if (['/เสร็จ', '/done', '/ยกเลิก', '/cancel'].includes(cmd)) {
+    if (['/ยกเลิก', '/cancel'].includes(cmd) && /^#?n\d+/i.test(arg.trim())) {
+      const noteId = Number(arg.match(/\d+/)[0]);
+      const note = noteId ? db.getClientNote(noteId) : null;
+      if (!note || note.group_jid !== groupJid) return send(groupJid, '🤖 ไม่พบบันทึกเลขนี้ ดูเลข #N ได้ด้วย /ลูกค้า ชื่อบ้าน');
+      db.deleteClientNote(note.id);
+      return send(groupJid, `🗑️ ลบบันทึก #N${note.id}: ${note.text}`);
+    }
     const id = Number((arg.match(/\d+/) || [])[0]);
     const task = id ? db.getTask(id) : null;
     if (!task || task.group_jid !== groupJid) return send(groupJid, '🤖 ไม่พบงานเลขนี้ ดูเลขงานได้ด้วย /งาน');
@@ -470,6 +798,42 @@ async function handleCommand(groupJid, groupName, text, { m, meta, senderName, s
   }
 }
 
+
+// Deletion never goes through AI. Re-fetch membership at BOTH challenge and confirmation.
+async function handleDeletion(groupJid, senderJid, arg) {
+  let meta;
+  try { meta = await sock.groupMetadata(groupJid); } catch {}
+  const member = meta?.participants?.find((p) => [p.id, p.lid, p.phoneNumber]
+    .filter(Boolean).some((j) => jidNormalizedUser(j) === senderJid));
+  if (!member || !['admin', 'superadmin'].includes(member.admin)) {
+    return send(groupJid, '🤖 เฉพาะแอดมินกลุ่มเท่านั้นที่สั่งลบข้อมูลได้ครับ');
+  }
+  if (arg === 'ยกเลิก') {
+    if (deletionRequests.get(groupJid)?.senderJid === senderJid) deletionRequests.delete(groupJid);
+    return send(groupJid, '🤖 ยกเลิกคำขอลบข้อมูลแล้วครับ');
+  }
+  if (!arg) {
+    const token = randomBytes(4).toString('hex');
+    deletionRequests.set(groupJid, { senderJid, token, expires: Date.now() + 5 * 60_000 });
+    return send(groupJid, `🗑️ จะลบแชท สรุป งาน การเตือน แฟ้มลูกค้า และไฟล์รูป/PDF ที่บอทเก็บของกลุ่มนี้ ย้อนคืนไม่ได้ครับ\nไม่ได้ลบข้อความใน WhatsApp หรือไฟล์บน Drive และไม่รวมไฟล์ export/สำเนาภายนอก\nแอดมินคนเดิมพิมพ์ /ลบข้อมูล ยืนยัน ${token} ภายใน 5 นาที หรือ /ลบข้อมูล ยกเลิก\nหลังลบ บอทยังเก็บข้อความใหม่ตามปกติครับ`);
+  }
+  const pending = deletionRequests.get(groupJid);
+  if (!pending || pending.senderJid !== senderJid || pending.expires < Date.now() || arg !== `ยืนยัน ${pending.token}`) {
+    return send(groupJid, '🤖 รหัสยืนยันไม่ถูกต้องหรือหมดอายุ ให้เริ่มด้วย /ลบข้อมูล ใหม่ครับ');
+  }
+  clearTimeout(syncTimers.get(groupJid));
+  syncTimers.delete(groupJid);
+  // Drain downloads too: otherwise a queued download could recreate an erased file.
+  await Promise.allSettled([...(pendingMedia.get(groupJid) || [])]);
+  await flushRenders(groupJid);
+  const dir = path.resolve(config.mediaDir, groupJid.split('@')[0]);
+  if (path.dirname(dir) !== path.resolve(config.mediaDir)) throw new Error('โฟลเดอร์ไฟล์ไม่ถูกต้อง');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const count = db.deleteGroupData(groupJid, Math.floor(Date.now() / 1000));
+  deletionRequests.delete(groupJid);
+  return send(groupJid, `🗑️ ลบข้อมูลที่บอทเก็บของกลุ่มนี้แล้วครับ (${count} ข้อความ พร้อมสรุป งาน การเตือน แฟ้มลูกค้า และรูป/PDF)\nข้อความใหม่หลังจากนี้ยังเก็บตามปกติครับ`);
+}
+
 // ---------- scheduled summary ----------
 
 async function scheduledSummary() {
@@ -489,6 +853,7 @@ async function scheduledSummary() {
           : g.group_jid;
       await send(target, summary);
       db.saveSummary(g.group_jid, from, rows[rows.length - 1].ts, summary);
+      db.setDayMarker(g.group_jid, 'last_summary_day', tasks.localDay());
       log(`📋 ส่งสรุปประจำวันของ ${name} แล้ว (${rows.length} ข้อความ)`);
     } catch (err) {
       log(`สรุปประจำวันของ ${name} ไม่สำเร็จ:`, explainError(err));
@@ -553,9 +918,14 @@ async function start() {
       } catch (err) {
         log('ดึงรายชื่อกลุ่มไม่ได้:', err.message);
       }
+      setTimeout(() => serialize(catchUp).catch((e) => log(e.message)), 15_000);
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
+      if (code === DisconnectReason.connectionReplaced) {
+        log('❌ มีบอทอีกตัวใช้เบอร์นี้อยู่ (เปิดซ้ำ 2 ที่) ตัวนี้จะหยุดทำงาน');
+        process.exit(1);
+      }
       if (code === DisconnectReason.loggedOut) {
         log('❌ ถูกออกจากระบบ ลบโฟลเดอร์ data/auth แล้วรันใหม่เพื่อสแกน QR อีกครั้ง');
         process.exit(1);
@@ -578,13 +948,11 @@ async function start() {
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const m of messages) {
-      // Messages you type on your own phone can arrive as "append"; treat fresh ones as live too.
-      const fresh = Number(m.messageTimestamp) > Date.now() / 1000 - 120;
-      await handleMessage(m, { live: type === 'notify' || (type === 'append' && fresh) }).catch((err) => log('อ่านข้อความไม่สำเร็จ:', err.message));
+      await handleMessage(m, upsertFlags(type, m)).catch((err) => log('อ่านข้อความไม่สำเร็จ:', err.message));
     }
   });
 
-  sock.ev.on('messages.reaction', (events) => handleReactions(events));
+  sock.ev.on('messages.reaction', (events) => serialize(() => handleReactions(events)).catch((e) => log(e.message)));
 
   sock.ev.on('messaging-history.set', async ({ messages, contacts }) => {
     learnContacts(contacts);
@@ -612,6 +980,65 @@ async function sendBriefings() {
     if (!isWatched(name)) continue;
     const text = tasks.briefing(g.group_jid, name);
     if (text) await send(g.group_jid, text, { kind: 'briefing' }).catch((e) => log('ส่งสรุปเช้าไม่สำเร็จ:', e.message));
+    db.setDayMarker(g.group_jid, 'last_briefing_day', tasks.localDay());
+  }
+}
+
+/** "M H * * *" -> minutes after midnight, or null for anything fancier. */
+function dailyCronMinutes(expr) {
+  const m = (expr || '').trim().match(/^(\d{1,2}) (\d{1,2}) \* \* \*$/);
+  return m ? Number(m[2]) * 60 + Number(m[1]) : null;
+}
+
+// After a restart: do what was missed while the bot was off.
+let catchingUp = false;
+async function catchUp() {
+  if (catchingUp) return;
+  catchingUp = true;
+  try {
+    const today = tasks.localDay();
+    const nowMin = tasks.localMinutes();
+    const groups = db.knownGroups().filter((g) => isWatched(groupCache.get(g.group_jid)?.subject || g.group_name));
+
+    // Morning briefing missed today (only until noon, after that it's stale).
+    const bMin = dailyCronMinutes(config.briefingCron);
+    if (bMin != null && nowMin > bMin && nowMin < 12 * 60 && groups.some((g) => db.dayMarker(g.group_jid, 'last_briefing_day') !== today)) {
+      log('☀️ ส่งสรุปเช้าที่พลาดไป');
+      await sendBriefings();
+    }
+    // Evening summary missed today (until 23:00).
+    const sMin = dailyCronMinutes(config.summaryCron);
+    if (sMin != null && nowMin > sMin && nowMin < 23 * 60 && groups.some((g) => db.dayMarker(g.group_jid, 'last_summary_day') !== today)) {
+      log('📋 ส่งสรุปประจำวันที่พลาดไป');
+      await scheduledSummary();
+    }
+    // Overdue reminders go out now (marked as late).
+    await fireReminders();
+    // Images/PDFs whose description was cut off.
+    for (const row of db.pendingMedia()) {
+      try {
+        const m = JSON.parse(row.media_msg, BufferJSON.reviver);
+        const content = normalizeMessageContent(m.message);
+        const type = getContentType(content);
+        describeLater(m, {
+          groupJid: row.group_jid,
+          groupName: row.group_name,
+          senderName: row.sender_name,
+          ts: row.ts,
+          kind: row.kind,
+          mime: content?.[type]?.mimetype || (row.kind === 'image' ? 'image/jpeg' : 'application/pdf'),
+          text: row.text,
+        });
+      } catch (err) {
+        db.setMediaMsg(row.id, null);
+      }
+    }
+    // Messages that arrived while off still need to be checked for tasks.
+    for (const g of groups) if (db.messagesAfterRow(g.group_jid, db.lastTaskRow(g.group_jid)).length) scheduleTaskSync(g.group_jid);
+  } catch (err) {
+    log('ทำงานที่ค้างไม่สำเร็จ:', err.message);
+  } finally {
+    catchingUp = false;
   }
 }
 
@@ -620,10 +1047,29 @@ function main() {
     console.error(NO_KEY_MESSAGE);
     process.exit(1);
   }
+  // Only one copy may run: two copies on one WhatsApp login knock each other off forever.
+  const lock = path.join(config.dataDir, 'bot.pid');
+  try {
+    const other = Number(fs.readFileSync(lock, 'utf8'));
+    if (other && other !== process.pid) {
+      process.kill(other, 0); // throws if that process is gone
+      console.error(`บอทเปิดอยู่แล้ว (PID ${other}) — ปิดตัวเดิมก่อน หรือรัน npm run autostart -- status`);
+      process.exit(1);
+    }
+  } catch {}
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  fs.writeFileSync(lock, String(process.pid));
+  const unlock = () => {
+    try {
+      if (fs.readFileSync(lock, 'utf8') === String(process.pid)) fs.unlinkSync(lock);
+    } catch {}
+  };
+  process.on('exit', unlock);
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
   // Reminders: check every 30 seconds while connected.
   setInterval(() => {
     if (!sock?.user) return;
-    fireReminders().catch((e) => log('ระบบเตือนผิดพลาด:', e.message));
+    serialize(fireReminders).catch((e) => log('ระบบเตือนผิดพลาด:', e.message));
   }, 30_000);
 
   if (config.briefingCron) {
@@ -631,7 +1077,7 @@ function main() {
       console.error(`BRIEFING_CRON ไม่ถูกต้อง: ${config.briefingCron}`);
       process.exit(1);
     }
-    cron.schedule(config.briefingCron, () => sendBriefings(), { timezone: config.timezone });
+    cron.schedule(config.briefingCron, () => serialize(sendBriefings).catch((e) => log(e.message)), { timezone: config.timezone });
     log(`☀️ สรุปงานตอนเช้าตามเวลา "${config.briefingCron}"`);
   }
 
@@ -640,7 +1086,7 @@ function main() {
     console.error(`SUMMARY_CRON ไม่ถูกต้อง: ${config.summaryCron}`);
     process.exit(1);
   }
-  cron.schedule(config.summaryCron, () => scheduledSummary().catch((e) => log(e)), { timezone: config.timezone });
+  cron.schedule(config.summaryCron, () => serialize(scheduledSummary).catch((e) => log(e)), { timezone: config.timezone });
   log(`⏰ สรุปอัตโนมัติตามเวลา "${config.summaryCron}" (${config.timezone}) ส่งไปที่ ${config.summaryTarget === 'owner' ? 'แชทส่วนตัวของเจ้าของ' : 'กลุ่ม'}`);
   }
 
@@ -656,9 +1102,12 @@ export const _test = {
   handleReactions,
   fireReminders,
   sendBriefings,
+  catchUp,
+  upsertFlags,
   flushTaskSync: async (groupJid) => {
     clearTimeout(syncTimers.get(groupJid));
     syncTimers.delete(groupJid);
   },
+  flushRenders,
   groupCache,
 };

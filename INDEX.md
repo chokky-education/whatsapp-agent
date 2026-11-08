@@ -20,15 +20,24 @@ node scripts/index.mjs show <id> --around nag --context 4
 | --- | --- |
 | เชื่อม WhatsApp / รับข้อความ / คำสั่งในกลุ่ม (/สรุป, /งาน…) / ตั้งเวลา cron | src/bot.js |
 | ค่าตั้งค่าจาก .env (ชื่อตัวแปร ค่าเริ่มต้น) | src/config.js; .env.example |
-| เรียก AI (Claude / OpenAI), เลือก provider, JSON output | src/ai.js |
+| เรียก AI (Claude / OpenAI), เลือก provider, JSON output, สร้างภาพ Sunburst | src/ai.js |
 | รูปแบบสรุป / prompt สรุป / transcript | src/summarize.js |
 | อธิบายรูปและ PDF | src/describe.js |
 | งาน / การเตือน / ทวงซ้ำ / สรุปเช้า / เวลา Bangkok | src/tasks.js |
+| แฟ้มข้อมูลลูกค้า (สูงสุด 10 ราย) / สเปกวัสดุ / สั่งแก้ VO / หน้างาน (/ลูกค้า, /ลบโน้ต) | src/tasks.js; src/db.js; src/bot.js |
+| ที่มาและประวัติการแก้โน้ต (/โน้ต, /ที่มา, /ประวัติโน้ต, /แก้โน้ต) | src/tasks.js; src/db.js; src/bot.js |
+| เรนเดอร์ภาพสถาปัตยกรรม (Sunburst) / เวอร์ชันภาพ / คิวเรนเดอร์ (/เรนเดอร์) | src/tasks.js; src/ai.js; src/bot.js; src/db.js |
+| ถามบอท / ค้นประวัติ / ลิงก์ Drive / ลูกค้าขอแก้ | src/tasks.js; src/db.js |
+| ลบข้อมูลกลุ่ม / ยืนยันแอดมิน / กันประวัติกลับมา | src/bot.js; src/db.js |
+| แนะนำตัวบอท / ข้อจำกัด | src/about.js |
+| เปิดบอทเบื้องหลัง macOS | scripts/autostart.sh |
 | ฐานข้อมูล SQLite (ตาราง + query) | src/db.js |
 | อ่านไฟล์ Export chat (.zip / _chat.txt) | src/export-parser.js; src/export-cli.js |
 | ตั้ง API key แบบไม่โชว์บนจอ | scripts/set-key.sh |
 | Tests | test/*.test.js (npm test) |
 | วิธีติดตั้ง / ใช้งาน / คำสั่งสำหรับผู้ใช้ | README.md |
+| วิจัยฟีเจอร์ Abdul / REA / คลังข้อมูล / semantic search / Calendar | docs/research/abdul-features-2026-11-08.md |
+| แผนพัฒนา ความจำที่แก้ได้ / ที่มาโน้ต / ค้นจากความหมาย / เตือนล่วงหน้า / ระดับการทวง | docs/PLAN-memory-search-reminders.md |
 | สถานะงานล่าสุด / งานถัดไป / บันทึกส่งต่อ | HANDOFF.md |
 | กติกาสำหรับ AI agent | AGENTS.md |
 | ระบบ index นี้ | scripts/index.mjs |
@@ -39,34 +48,49 @@ Symbols are `name:line`; a leading `_` means not exported.
 
 | File | What it is | Symbols |
 | --- | --- | --- |
-| AGENTS.md | Shared instruction file for the agents used on this project: **Codex**, **Antigravity** and **Claude Code**. | AGENTS.md — WhatsApp group summarizer bot:1, Starting a session (do this first):15, Rules:31, Checks:50, Before you finish (handoff):57 |
+| .agents/hooks.json |  |  |
+| .claude/settings.json |  |  |
+| .codex/hooks.json |  |  |
+| AGENTS.md | Shared instruction file for the agents used on this project: **Codex**, **Antigravity** and **Claude Code**. | AGENTS.md — WhatsApp group summarizer bot:1, Starting a session (do this first):15, Rules:31, Second brain (what we've done before):50, Checks:64, Before you finish (handoff):71 |
 | CLAUDE.md | All agent instructions live in AGENTS.md (shared by every AI tool). Read it first, then HANDOFF.md and INDEX.md. | CLAUDE.md:1 |
-| HANDOFF.md | Hand-maintained by whichever agent or person worked last. Keep it short and current: replace stale | HANDOFF — current state:1, Status (2026-11-08):6, In progress:21, Next steps / ideas:25, Known issues / watch out:29, Log:34 |
-| README.md | บอทจะเข้าไปอยู่ในกลุ่ม WhatsApp แล้วทำงานแบบนี้: | บอทสรุปงานกลุ่ม WhatsApp:1, ติดตั้ง:15, ลองกับไฟล์ export ก่อน (ไม่ต้องต่อ WhatsApp):27, เปิดบอท:39, งานและการเตือน:53, คำสั่งในกลุ่ม:64, ค่าใช้จ่าย:78, โครงสร้างไฟล์:83 |
+| HANDOFF.md | Hand-maintained by whichever agent or person worked last. Keep it short and current: replace stale | HANDOFF — current state:1, Status (2026-11-09):6, In progress:40, Next steps / ideas:44, Known issues / watch out:50, Log:65 |
+| README.md | บอทจะเข้าไปอยู่ในกลุ่ม WhatsApp แล้วทำงานแบบนี้: | บอทสรุปงานกลุ่ม WhatsApp:1, ติดตั้ง:15, ลองกับไฟล์ export ก่อน (ไม่ต้องต่อ WhatsApp):27, เปิดบอท:39, งานและการเตือน:53, แฟ้มข้อมูลลูกค้า (สูงสุด 10 รายต่อกลุ่ม):66, ภาพเรนเดอร์สถาปัตยกรรม (Sunburst):81, ถามบอทและลบข้อมูล (เฟส 2):94, ข้อจำกัดของบอทที่รู้อยู่:106, ถ้าปิดเครื่องหรือบอทดับ:122, คำสั่งในกลุ่ม:134, ค่าใช้จ่าย:157, โครงสร้างไฟล์:162 |
+| docs/PLAN-memory-search-reminders.md | วันที่ 8 พฤศจิกายน 2026 · สถานะ: กำลังพัฒนาตามลำดับ (เริ่มระยะ 1 และระยะ 2) | แผนพัฒนา 4 ระยะ: ความจำที่มีที่มา → เรนเดอร์และเก็บเวอร์ชันภาพ → ค้นจากความหมาย → เตือนล่วงหน้า/ระดับการทวง:1, ขอบเขตและจุดตั้งต้น:8, ระยะ 1 — ความจำที่ดูที่มาและแก้ได้:18, สิ่งที่ผู้ใช้จะทำได้:20, โครงสร้างและกติกา:31, โน้ตเก่า การลบ และคำตอบ:43, เงื่อนไขผ่าน:49, ระยะ 2 — เรนเดอร์และเก็บเวอร์ชันภาพด้วย `gpt-image-2.6-sunburst`:56, สิ่งที่ผู้ใช้จะทำได้:58, โครงสร้างและกติกา 4 ส่วน:67, เงื่อนไขผ่าน:84, ระยะ 3 — ค้นจากความหมายร่วมกับคำตรง:91, สิ่งที่ผู้ใช้จะทำได้:93, แนวทางทำ:98, ระยะ 4 — เตือนล่วงหน้าและทวงตามความสำคัญ:109, สิ่งที่ผู้ใช้จะทำได้:111, โครงสร้างและกติกา:123, แบ่งงานเป็นชุดที่ส่งต… |
+| docs/research/abdul-features-2026-11-08.md | ตรวจวันที่ 8 พฤศจิกายน 2026 (เวลาไทย) — ผลสำรวจและข้อเสนอ ยังไม่ได้เพิ่มฟีเจอร์ให้บอท | สำรวจ Abdul ด้วย REA เพื่อปรับใช้กับบอทเรา:1, สิ่งที่ควรหยิบมาใช้ก่อน:5, ตรวจถึงไหน และเชื่อผลได้แค่ไหน:11, เทียบฟีเจอร์:23, จุดที่ข้อมูลขัดกัน:38, แนวทางระบบที่เรียนรู้ได้:45, ลำดับที่เสนอสำหรับบอทเรา:58, 1. ความจำที่ย้อนดูและแก้ได้:62, 2. ค้นจากความหมายร่วมกับคำตรง:73, 3. เตือนล่วงหน้าและทวงตามความสำคัญ:85, 4. Google Calendar เมื่อจำเป็นต้องแชร์ปฏิทิน:94, งานที่น่าสนใจเพิ่มเติม แต่ไม่ใช่ฟีเจอร์ที่ยืนยันจาก Abdul:100, หลักฐานที่ใช้:105, สถานะส่งต่อ:138 |
+| eval/phase1-eval.local.mjs | Measures how well the AI understands real Thai requests and finds tasks in chat. Uses the real AI (costs a few cents) on a COPY of the database; nothing is sen… | _check:65, _seed:128, _syncCase:133 |
 | package.json |  |  |
-| scripts/index.mjs | Local search index for AI agents (Codex, Antigravity, Claude Code — any agent that can run a shell). Plain Node, no dependencies. Every command refreshes chang… | _parseArgs:35, _fail:50, _clamp:78, _removeSource:107, _isChanged:115, _upsert:124, _chunk:136, _kindOf:155, _symbolsOf:162, _summaryOf:182, _walk:202, _refreshSchema:225, _writeMap:265, _emit:333 |
+| scripts/autostart.sh | Run the bot in the background on macOS: starts at login, restarts if it crashes, and keeps the Mac awake while it runs (caffeinate). Closing the lid still slee… |  |
+| scripts/index.mjs | Local search index for AI agents (Codex, Antigravity, Claude Code — any agent that can run a shell). Plain Node, no dependencies. Every command refreshes chang… | _parseArgs:35, _fail:50, _clamp:78, _removeSource:107, _isChanged:115, _upsert:124, _chunk:136, _kindOf:155, _symbolsOf:162, _summaryOf:182, _walk:202, _refreshSchema:225, _writeMap:274, _emit:342 |
 | scripts/set-key.sh | Asks for an API key without showing it on screen and saves it into .env. |  |
-| src/ai.js | One place that talks to the AI. AI_PROVIDER picks Claude (Anthropic) or OpenAI. | hasCredentials:9, NO_KEY_MESSAGE:14, ask:29, _askClaude:36, _askOpenAI:69, explainError:100, askJSON:119, _stub:161 |
+| src/about.js | What the bot says about itself: the /แนะนำ introduction, and the facts it uses to answer questions like "บอทนี้คืออะไร" or "ข้อมูลไปไหนบ้าง". Keep these true: … | INTRO:11, ABOUT_FOR_AI:50 |
+| src/ai.js | One place that talks to the AI. AI_PROVIDER picks Claude (Anthropic) or OpenAI. | hasCredentials:9, NO_KEY_MESSAGE:14, ask:29, _askClaude:36, _askOpenAI:69, explainError:100, askJSON:119, renderImage:171, _stub:210 |
 | src/bot.js | WhatsApp group summarizer bot. Logs in as a linked device (like WhatsApp Web), stores group messages in SQLite, has Claude describe images/PDFs as they arrive,… |  |
 | src/config.js |  | config:13 |
-| src/db.js |  | markToBot:46, saveMessage:58, setMediaDesc:76, setMediaPath:80, getMessages:84, lastSummaryEnd:99, saveSummary:106, lastSummaryText:112, knownGroups:120, rememberContact:129, contactName:136, addTask:190, getTask:200, openTasks:204, setTaskStatus:213, updateTask:223, addReminder:229, dueReminders:239, activeReminders:243, getReminder:247, rescheduleReminder:251, snoozeReminder:255, deactivateReminder:259, recordBotMessage:263, botMessage:270, lastTaskRow:281, setLastTaskRow:285, maxRow:292, messagesAfterRow:297, jidsForName:311, knownNames:319, taskStats:324 |
+| src/db.js |  | markToBot:49, saveMessage:61, setMediaDesc:80, setMediaPath:84, getMessages:88, lastSummaryEnd:103, saveSummary:110, lastSummaryText:116, knownGroups:124, rememberContact:133, contactName:140, CLIENT_STAGES:196, NOTE_CATEGORIES:197, addClient:311, getClient:333, activeClients:337, clientTerms:356, findClient:365, updateClient:390, getMessage:420, hasClientNoteDedupe:443, addClientNote:453, getClientNote:488, clientNotes:492, editClientNote:496, noteRevisions:552, noteSources:560, deleteClientNote:579, addClientRender:589, getClientRender:618, clientRenders:623, getClientRenderByVersion:632, r… |
 | src/describe.js |  | mimeForFile:22, canDescribe:29, describeMedia:39 |
 | src/export-cli.js | Summarize a WhatsApp "Export chat" .zip (or its _chat.txt) without running the bot. |  |
 | src/export-parser.js | Parses a WhatsApp "Export chat" _chat.txt (iOS format, Thai or English UI). | _toYear:31, _toTs:41, _kindFromFile:54, parseExport:67 |
-| src/summarize.js |  | buildTranscript:33, summarize:96 |
-| src/tasks.js | Phase 1: tasks, reminders and the morning briefing. The AI only turns chat into structured actions; this file applies them to the database and writes every con… | nowTs:18, parseLocal:23, fmtWhen:40, _nowForPrompt:50, nextOccurrence:60, _daytime:84, _taskLine:94, formatTaskList:100, briefing:128, reminderText:152, _contextBlock:190, handleRequest:231, _mentionFor:269, _applyAction:273, syncTasks:419, syncNotice:475, fireDueReminders:490 |
-| test/bot.test.js | End-to-end tests of the bot's message handling with a fake WhatsApp socket and a canned AI. Nothing is sent to WhatsApp or to an AI provider. | test "/ช่วย shows help, /งาน with nothing open says so":92, test "/เสร็จ with a bad, missing or foreign task number…":101, test "/เตือน without text explains how to use it":112, test ""บอท ...":121, test "@mentioning the bot by its LID is treated as a re…":140, test "a nickname resolves to the right person when the …":149, test ""เตือนฉัน":158, test "a Buddhist-era year from the AI is converted":167, test "recurring reminder, and bad actions report clear …":176, test "a one-off reminder in the past is refused":193, test "when the AI fails, the group gets an error message":200, test "an empty … |
+| src/summarize.js |  | buildTranscript:33, summarize:97 |
+| src/tasks.js | Phase 1: tasks, reminders and the morning briefing. Phase 2: Q&A over history, client dossiers, note provenance/revisions, and render jobs. The AI only turns c… | nowTs:20, parseLocal:25, fmtWhen:42, nextOccurrence:62, STAGE_LABEL:96, CATEGORY_LABEL:104, formatClientList:119, formatClientDossier:137, formatClientNote:174, formatNoteSources:197, formatNoteHistory:213, localDayStartTs:228, clientSpecSnapshot:232, buildRenderPrompt:238, formatRenderCaption:250, formatClientRenders:261, formatTaskList:285, briefing:313, reminderText:337, localDay:347, localMinutes:353, handleRequest:501, syncTasks:893, syncNotice:985, fireDueReminders:1006, searchTerms:1032 |
+| test/bot.test.js | End-to-end tests of the bot's message handling with a fake WhatsApp socket and a canned AI. Nothing is sent to WhatsApp or to an AI provider. | test "/ช่วย shows help, /งาน with nothing open says so":110, test "/เสร็จ with a bad, missing or foreign task number…":119, test "/เตือน without text explains how to use it":130, test ""บอท ...":139, test "@mentioning the bot by its LID is treated as a re…":158, test "a nickname resolves to the right person when the …":167, test ""เตือนฉัน":176, test "a Buddhist-era year from the AI is converted":185, test "recurring reminder, and bad actions report clear …":194, test "a one-off reminder in the past is refused":211, test "when the AI fails, the group gets an error message":218, test "an empty… |
 | test/export-parser.test.js |  | test "parses Thai iOS export, drops system lines, keeps…":18, test "converts Buddhist-era 2-digit year 69 to 2026 and…":27 |
-| test/tasks.test.js |  | test "parseLocal reads Bangkok wall-clock time":7, test "nextOccurrence handles daily, weekdays, weekly an…":12 |
+| test/tasks.test.js |  | test "parseLocal reads Bangkok wall-clock time":15, test "nextOccurrence handles daily, weekdays, weekly an…":20, test "client CRUD, alias matching, note categories, tas…":29, test "Phase 1: note provenance sources, revisions, expe…":63, test "Phase 2: client_renders version numbering, parent…":154 |
 
 ## Database (data/messages.db — schema only)
 
-- **bot_messages**: msg_id, group_jid, task_id, reminder_id, kind, sent_at
+- **bot_messages**: msg_id, group_jid, task_id, reminder_id, kind, sent_at, render_id
+- **client_note_revisions**: id, note_id, group_jid, client_id, revision_no, category, text, kind, reason, prev_revision_id, created_by, created_at
+- **client_note_sources**: revision_id, note_id, group_jid, message_id
+- **client_note_tombstones**: group_jid, client_id, dedupe_key, created_at
+- **client_notes**: id, group_jid, client_id, category, text, created_by, source, created_at, current_revision_id, revision_count, status, updated_by, updated_at
+- **client_renders**: id, group_jid, client_id, version_no, parent_version, source_msg_id, source_media_path, output_media_path, prompt, spec_snapshot, model, status, created_by, created_at
+- **clients**: id, group_jid, name, aliases, stage, location, budget, status, created_by, created_at, updated_at
 - **contacts**: jid, name
-- **group_state**: group_jid, last_task_sync, last_task_row
-- **messages**: id, group_jid, group_name, sender_jid, sender_name, ts, kind, text, file_name, media_path, media_desc, quoted_text, from_bot, to_bot
+- **group_privacy**: group_jid, deleted_through
+- **group_state**: group_jid, last_task_sync, last_task_row, last_briefing_day, last_summary_day
+- **messages**: id, group_jid, group_name, sender_jid, sender_name, ts, kind, text, file_name, media_path, media_desc, quoted_text, from_bot, to_bot, media_msg
 - **reminders**: id, group_jid, task_id, text, target_name, target_jid, next_at, repeat, created_by, created_at, active, sent_count
 - **summaries**: id, group_jid, period_start, period_end, created_at, text
-- **tasks**: id, group_jid, title, assignee_name, assignee_jid, created_by, source, created_at, due_at, status, done_at, done_by
+- **tasks**: id, group_jid, title, assignee_name, assignee_jid, created_by, source, created_at, due_at, status, done_at, done_by, client_id
 
 Not indexed on purpose: `data/` rows, `data/auth/` (WhatsApp login keys), `data/media/`, `output/` (real chat summaries), `.env`.

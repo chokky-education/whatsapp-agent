@@ -30,7 +30,7 @@ const fmtDate = (ts) =>
  * Turns stored rows into a compact transcript Claude can read.
  * Rows use the db column names (sender_name, media_desc, ...).
  */
-export function buildTranscript(rows) {
+export function buildTranscript(rows, { withIds = false } = {}) {
   const lines = [];
   let day = null;
   for (const r of rows) {
@@ -39,18 +39,19 @@ export function buildTranscript(rows) {
       lines.push(`\n--- ${d} ---`);
       day = d;
     }
+    const idTag = withIds && r.id ? `[#ID:${r.id}] ` : '';
     const who = r.sender_name || 'ไม่ทราบชื่อ';
     const quoted = r.quoted_text ? ` (ตอบกลับ: "${r.quoted_text.slice(0, 80)}")` : '';
     if (r.kind === 'text') {
       if (/^\/\S/.test(r.text || '')) continue; // bot commands like /สรุป
-      lines.push(`[${fmtTime(r.ts)}] ${who}${quoted}: ${r.text}`);
+      lines.push(`${idTag}[${fmtTime(r.ts)}] ${who}${quoted}: ${r.text}`);
     } else {
       if (r.kind === 'sticker') continue;
       const label = KIND_LABEL[r.kind] || 'ไฟล์';
       const name = r.kind === 'document' && r.file_name ? ` "${r.file_name}"` : '';
       const desc = r.media_desc ? ` — ${r.media_desc.replace(/\s+/g, ' ')}` : '';
       const cap = r.text ? ` คำบรรยาย: ${r.text}` : '';
-      lines.push(`[${fmtTime(r.ts)}] ${who}${quoted}: [${label}${name}${desc}]${cap}`);
+      lines.push(`${idTag}[${fmtTime(r.ts)}] ${who}${quoted}: [${label}${name}${desc}]${cap}`);
     }
   }
   return lines.join('\n').trim();

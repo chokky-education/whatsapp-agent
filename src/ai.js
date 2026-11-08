@@ -1,6 +1,6 @@
 // One place that talks to the AI. AI_PROVIDER picks Claude (Anthropic) or OpenAI.
 import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import { config } from './config.js';
 
 let anthropic;
@@ -157,5 +157,54 @@ export async function askJSON({ system, text, schema, name = 'result', effort = 
   }
 }
 
+/**
+ * Generate or edit an architectural render image using config.openaiImageModel (gpt-image-2.6-sunburst).
+ * Separate from the chat model so chat can use either OpenAI or Claude.
+ * @param {{
+ *   prompt: string,
+ *   sourceImage?: { buffer: Buffer, mime?: string, name?: string } | null,
+ *   quality?: 'low' | 'medium' | 'high' | 'auto',
+ *   size?: '1024x1024' | '1536x1024' | '1024x1536' | 'auto',
+ * }} p
+ * @returns {Promise<{ buffer: Buffer, mime: string, model: string }>}
+ */
+export async function renderImage({ prompt, sourceImage = null, quality = config.imageQuality, size = 'auto' }) {
+  if (_stub.renderImage) return _stub.renderImage({ prompt, sourceImage, quality, size });
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('ไม่พบ OPENAI_API_KEY สำหรับสร้างภาพด้วย ' + config.openaiImageModel);
+  }
+  openai ??= new OpenAI();
+  const model = config.openaiImageModel;
+  let response;
+  if (sourceImage?.buffer) {
+    const file = await toFile(sourceImage.buffer, sourceImage.name || 'source.png', {
+      type: sourceImage.mime || 'image/png',
+    });
+    response = await openai.images.edit({
+      model,
+      image: file,
+      prompt,
+      quality,
+      size,
+      output_format: 'png',
+    });
+  } else {
+    response = await openai.images.generate({
+      model,
+      prompt,
+      quality,
+      size,
+      output_format: 'png',
+    });
+  }
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) throw new Error('AI ไม่ได้ส่งข้อมูลภาพกลับมา');
+  return {
+    buffer: Buffer.from(b64, 'base64'),
+    mime: 'image/png',
+    model,
+  };
+}
+
 /** Tests replace the AI with canned answers here. */
-export const _stub = { ask: null, askJSON: null };
+export const _stub = { ask: null, askJSON: null, renderImage: null };

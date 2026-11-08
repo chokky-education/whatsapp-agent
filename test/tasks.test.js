@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLocal, nextOccurrence } from '../src/tasks.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-tasks-test-'));
+process.env.DB_PATH = path.join(tmp, 'test.db');
+
+const { parseLocal, nextOccurrence } = await import('../src/tasks.js');
+const db = await import('../src/db.js');
 
 const iso = (ts) => new Date((ts + 7 * 3600) * 1000).toISOString().slice(0, 16); // Bangkok wall clock
 
@@ -17,3 +25,174 @@ test('nextOccurrence handles daily, weekdays, weekly and monthly', () => {
   assert.equal(iso(nextOccurrence(parseLocal('2026-01-31 08:00'), 'monthly')), '2026-02-28T08:00');
   assert.equal(nextOccurrence(fri, 'none'), null);
 });
+
+test('client CRUD, alias matching, note categories, task linking, and group deletion', () => {
+  const G = '120363000000000099@g.us';
+  const id = db.addClient({
+    groupJid: G,
+    name: 'คุณสมชาย',
+    aliases: 'บ้านลาดพร้าว, พี่ชาย',
+    stage: 'design',
+    location: 'ลาดพร้าว 71',
+    budget: '8 ล้าน',
+    createdBy: 'Nok',
+  });
+  assert.equal(db.findClient(G, 'บ้านลาดพร้าว')?.id, id);
+  assert.equal(db.findClient(G, 'คุณสมชาย')?.id, id);
+  assert.equal(db.findClient('other@g.us', 'บ้านลาดพร้าว'), null);
+
+  const id2 = db.addClient({ groupJid: G, name: 'เอึ้อยดาว', aliases: 'บ้านดาว', stage: 'brief' });
+  assert.equal(db.findClient(G, 'เอื้อยดาว')?.id, id2, 'matches ึ/ื spelling variant');
+  assert.ok(db.clientTerms(db.getClient(id2)).includes('เอื้อยดาว'));
+
+  const n1 = db.addClientNote({ groupJid: G, clientId: id, category: 'spec', text: 'กระเบื้องสีเทา 60x60', createdBy: 'Nok' });
+  assert.equal(db.clientNotes(id).length, 1);
+  assert.equal(db.clientNotes(id)[0].id, n1);
+
+  db.addTask({ groupJid: G, title: 'แก้แปลนชั้น 2', clientId: id });
+  assert.equal(db.openTasks(G)[0].client_name, 'คุณสมชาย');
+
+  assert.equal(db.deleteClientNote(n1), true);
+  assert.equal(db.clientNotes(id).length, 0);
+
+  db.deleteGroupData(G, Math.floor(Date.now() / 1000));
+  assert.equal(db.activeClients(G).length, 0);
+  assert.equal(db.getClient(id), null);
+});
+
+test('Phase 1: note provenance sources, revisions, expectedRevision conflict, and tombstone dedupe', () => {
+  const G = '120363000000000101@g.us';
+  const G_OTHER = '120363000000000102@g.us';
+  const cId = db.addClient({ groupJid: G, name: 'บ้านตัวอย่าง', aliases: 'คุณเอก', stage: 'design' });
+
+  db.saveMessage({ id: 'MSG_REAL_1', groupJid: G, senderName: 'Nok', ts: 1700000100, kind: 'text', text: 'บ้านตัวอย่าง ใช้กระเบื้องสีขาว' });
+  db.saveMessage({ id: 'MSG_REAL_2', groupJid: G, senderName: 'Somchai', ts: 1700000200, kind: 'text', text: 'บ้านตัวอย่าง เปลี่ยนเป็นสีเทาด้าน' });
+  db.saveMessage({ id: 'MSG_FOREIGN', groupJid: G_OTHER, senderName: 'Nok', ts: 1700000300, kind: 'text', text: 'ข้อความกลุ่มอื่น' });
+
+  const noteId = db.addClientNote({
+    groupJid: G,
+    clientId: cId,
+    category: 'spec',
+    text: 'กระเบื้องสีขาว',
+    createdBy: 'Nok',
+    source: 'chat',
+    sourceMessageIds: ['MSG_REAL_1', 'MSG_FOREIGN', 'MSG_FAKE_DOES_NOT_EXIST'],
+  });
+
+  const note1 = db.getClientNote(noteId);
+  assert.equal(note1.revision_count, 1);
+  assert.ok(note1.current_revision_id);
+
+  // Only valid same-group message is linked as provenance
+  const sources1 = db.noteSources(noteId, G);
+  assert.equal(sources1.length, 1);
+  assert.equal(sources1[0].id, 'MSG_REAL_1');
+  assert.equal(sources1[0].sender_name, 'Nok');
+  assert.equal(db.noteSources(noteId, G_OTHER).length, 0, 'cross-group source read blocked');
+
+  // Stale expectedRevision is rejected
+  const conflict = db.editClientNote(noteId, {
+    groupJid: G,
+    text: 'สีครีม',
+    updatedBy: 'Somchai',
+    expectedRevision: 99,
+  });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.reason, 'conflict');
+
+  // Cross-group edit is rejected
+  const crossEdit = db.editClientNote(noteId, {
+    groupJid: G_OTHER,
+    text: 'แก้ข้ามกลุ่ม',
+    updatedBy: 'Somchai',
+  });
+  assert.equal(crossEdit.ok, false);
+
+  // Valid edit increments revision, preserves history, and updates sources
+  const edited = db.editClientNote(noteId, {
+    groupJid: G,
+    text: 'กระเบื้องสีเทาด้าน',
+    category: 'spec',
+    updatedBy: 'Somchai',
+    reason: 'ลูกค้าเปลี่ยนสเปก',
+    kind: 'correction',
+    sourceMessageIds: ['MSG_REAL_2'],
+    expectedRevision: 1,
+  });
+  assert.equal(edited.ok, true);
+  assert.equal(edited.note.text, 'กระเบื้องสีเทาด้าน');
+  assert.equal(edited.note.revision_count, 2);
+
+  const revs = db.noteRevisions(noteId, G);
+  assert.equal(revs.length, 2);
+  assert.equal(revs[0].revision_no, 1);
+  assert.equal(revs[0].text, 'กระเบื้องสีขาว');
+  assert.equal(revs[1].revision_no, 2);
+  assert.equal(revs[1].text, 'กระเบื้องสีเทาด้าน');
+  assert.equal(revs[1].created_by, 'Somchai');
+
+  const sources2 = db.noteSources(noteId, G);
+  assert.equal(sources2.length, 1);
+  assert.equal(sources2[0].id, 'MSG_REAL_2');
+
+  // Old superseded text and current text are both blocked from duplicate auto-sync
+  assert.equal(db.hasClientNoteDedupe(G, cId, 'กระเบื้องสีขาว'), true);
+  assert.equal(db.hasClientNoteDedupe(G, cId, 'กระเบื้องสีเทาด้าน'), true);
+
+  // Deleting note keeps tombstone so auto-sync will not recreate it from old chat
+  assert.equal(db.deleteClientNote(noteId, G_OTHER), false);
+  assert.equal(db.deleteClientNote(noteId, G), true);
+  assert.equal(db.getClientNote(noteId), null);
+  assert.equal(db.noteRevisions(noteId, G).length, 0);
+  assert.equal(db.hasClientNoteDedupe(G, cId, 'กระเบื้องสีเทาด้าน'), true);
+
+  // Group erasure clears tombstones too
+  db.deleteGroupData(G, Math.floor(Date.now() / 1000));
+  assert.equal(db.hasClientNoteDedupe(G, cId, 'กระเบื้องสีเทาด้าน'), false);
+});
+
+test('Phase 2: client_renders version numbering, parent version tracking, daily quota count, and group deletion', () => {
+  const G = '120363000000000201@g.us';
+  const cId = db.addClient({ groupJid: G, name: 'บ้านตัวอย่างเรนเดอร์', stage: 'design' });
+
+  const r1 = db.addClientRender({
+    groupJid: G,
+    clientId: cId,
+    sourceMsgId: 'SKETCHUP_MSG_1',
+    sourceMediaPath: '/tmp/sketchup1.png',
+    outputMediaPath: '/tmp/render_v1.png',
+    prompt: 'เรนเดอร์บ้านตัวอย่าง ผนังขาว หลังคาเทา แสงช่วงเย็น',
+    specSnapshot: 'ผนังขาว, หลังคาเทา, กระเบื้องยางลายไม้สีโอ๊ค',
+    model: 'gpt-image-2.6-sunburst',
+    createdBy: 'Nok',
+  });
+  assert.equal(r1.versionNo, 1);
+
+  const r2 = db.addClientRender({
+    groupJid: G,
+    clientId: cId,
+    parentVersion: 1,
+    sourceMediaPath: '/tmp/render_v1.png',
+    outputMediaPath: '/tmp/render_v2.png',
+    prompt: 'แก้ภาพเวอร์ชัน 1 ให้ผนังเป็นสีครีม',
+    specSnapshot: 'ผนังขาว, หลังคาเทา, กระเบื้องยางลายไม้สีโอ๊ค',
+    model: 'gpt-image-2.6-sunburst',
+    createdBy: 'Somchai',
+  });
+  assert.equal(r2.versionNo, 2);
+
+  const list = db.clientRenders(cId, G);
+  assert.equal(list.length, 2);
+  assert.equal(list[0].version_no, 1);
+  assert.equal(list[1].version_no, 2);
+  assert.equal(list[1].parent_version, 1);
+
+  assert.equal(db.getClientRenderByVersion(cId, 1, G).output_media_path, '/tmp/render_v1.png');
+  assert.equal(db.getClientRenderByVersion(cId, 2, G).output_media_path, '/tmp/render_v2.png');
+  assert.equal(db.rendersCountSince(G, Math.floor(Date.now() / 1000) - 60), 2);
+
+  db.deleteGroupData(G, Math.floor(Date.now() / 1000));
+  assert.equal(db.clientRenders(cId, G).length, 0);
+});
+
+
