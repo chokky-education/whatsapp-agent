@@ -1,0 +1,18 @@
+{
+  "second-brain": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook antigravity session-start || echo '{}'",
+        "timeout": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook antigravity stop || echo '{\"decision\":\"stop\"}'",
+        "timeout": 30
+      }
+    ]
+  }
+}

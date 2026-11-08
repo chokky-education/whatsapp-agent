@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook claude session-start || echo '{}'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook claude stop || echo '{}'",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

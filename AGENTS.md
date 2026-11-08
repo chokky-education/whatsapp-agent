@@ -47,6 +47,20 @@ reminders. AI provider is `AI_PROVIDER=claude|openai` (`src/ai.js`). User-facing
 - New config goes in `src/config.js` **and** `.env.example` (with a Thai comment), and in `README.md` if users set it.
 - Bot replies and README are Thai; code, comments and these agent docs are English.
 
+## Second brain (what we've done before)
+
+Past fixes, decisions and gotchas live in a **private** folder outside this repo: `~/second-brain`
+(CLI: `node ~/second-brain/bin/brain.mjs`). Hooks in `.claude/`, `.codex/` and `.agents/` load the latest
+notes at session start and remind you once at the end of a turn if you changed files without recording anything.
+
+- **Before solving a problem:** `brain search "keywords"` (Thai or English) — someone may already have fixed it.
+- **When the work has a result** (a fix that worked, a decision, a trap you hit, a preference the user stated), write one entry:
+  `brain new --type fix|decision|howto|gotcha|preference --title "…" --tags a,b --agent <your name> --stdin`
+  with the four Thai sections on stdin (ปัญหา / บริบท, สิ่งที่ทำ, ทำไมถึงเลือกวิธีนี้, ครั้งหน้าให้ทำแบบนี้), then `brain save`.
+- Skip it for unfinished or trivial work, or when the changed files aren't yours (another agent may be editing). Don't ask the user.
+- Never put tokens, passwords, client names, or real phone numbers/WhatsApp IDs in an entry; `brain save` refuses obvious ones.
+- Never copy entries into this public repo. Hooks are a reminder, not a gate: if they don't fire (Codex needs `/hooks` trust), follow this section anyway.
+
 ## Checks
 
 ```bash

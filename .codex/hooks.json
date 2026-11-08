@@ -1,0 +1,29 @@
+{
+  "description": "Second brain: load past notes at session start, remind to record at the end of a turn.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook codex session-start || echo '{}'",
+            "statusMessage": "Loading second brain",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/second-brain/bin/brain.mjs\"; [ -f \"$f\" ] && node \"$f\" hook codex stop || echo '{}'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
