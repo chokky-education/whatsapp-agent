@@ -61,10 +61,13 @@ _stub.askJSON = async (p) => {
   return typeof next === 'function' ? next(p) : next;
 };
 _stub.ask = async () => 'สรุปทดสอบ';
+// Fake image model: returns a real PNG of the requested canvas size.
 _stub.renderImage = async (p) => {
   renderCalls.push(p);
+  const [width, height] = (p.size || '1024x1024').split('x').map(Number);
+  const { default: sharp } = await import('sharp');
   return {
-    buffer: Buffer.from(`RENDER_OUT_${renderCalls.length}`),
+    buffer: await sharp({ create: { width, height, channels: 3, background: '#336699' } }).png().toBuffer(),
     mime: 'image/png',
     model: 'gpt-image-2.6-sunburst',
   };
@@ -918,187 +921,220 @@ test('Phase 1: note provenance (/โน้ต, /ที่มา, /ประว�
   assert.match(qaPrompt, /แก้จากเดิม: "พื้นห้องรับแขกใช้กระเบื้องสีขาว"/);
 });
 
-test('Phase 2: Sunburst render from SketchUp image with dossier specs, version edit (v1 -> v2), /เรนเดอร์, and daily quota cap', async () => {
-  reset();
-  const sketchupFile = path.join(tmp, 'sketchup_source.png');
-  fs.writeFileSync(sketchupFile, 'SKETCHUP_RAW_BYTES');
-  db.saveMessage({
-    id: 'SKETCHUP_MSG_1',
-    groupJid: G,
-    senderJid: NOK.jid,
-    senderName: 'Nok',
-    ts: nowTs() - 10,
-    kind: 'image',
-    text: 'มุมหน้าบ้านจาก SketchUp',
-    mediaPath: sketchupFile,
-  });
+// ---------- renders (src/render.js + render routing in bot.js) ----------
 
-  // 1. Reply to SketchUp image to render v1 using current client specs
-  aiAnswers.push({
-    reply: '',
-    actions: [
-      act({
-        type: 'render_client_image',
-        client: 'บ้านลาดพร้าว',
-        title: 'ใช้ผนังขาว หลังคาเทา และแสงช่วงเย็น ตามสเปกในแฟ้ม',
-        version_no: null,
-      }),
-    ],
-  });
-  await say(NOK, 'บอท เรนเดอร์บ้านลาดพร้าวจากภาพนี้ ใช้ผนังขาว หลังคาเทา และแสงช่วงเย็น ตามสเปกในแฟ้ม', {
-    quotedId: 'SKETCHUP_MSG_1',
-  });
-  await bot.flushRenders(G);
+const { default: sharp } = await import('sharp');
+const solid = (width, height, color = '#808080') =>
+  sharp({ create: { width, height, channels: 3, background: color } }).png().toBuffer();
+let lastRenderMsgId = null;
 
-  assert.equal(renderCalls.length, 1);
-  assert.equal(renderCalls[0].sourceImage.buffer.toString(), 'SKETCHUP_RAW_BYTES');
-  assert.match(renderCalls[0].prompt, /ใช้ผนังขาว หลังคาเทา และแสงช่วงเย็น/);
-  assert.match(renderCalls[0].prompt, /พื้นห้องรับแขกใช้กระเบื้องยางลายไม้สีโอ๊ค/, 'uses revised spec from Phase 1');
-  assert.doesNotMatch(renderCalls[0].prompt, /พื้นห้องรับแขกใช้กระเบื้องสีขาว/, 'does not use superseded spec');
-
-  const imgMsg1 = sent.find((s) => s.image);
-  assert.ok(imgMsg1, 'sent rendered image back to WhatsApp');
-  assert.equal(imgMsg1.image.toString(), 'RENDER_OUT_1');
-  assert.match(imgMsg1.caption, /เวอร์ชัน v1/);
-  assert.match(imgMsg1.caption, /ตรวจเทียบมิติและช่องเปิด/);
-
-  // 2. Edit v1 -> v2 by specifying version_no: 1
-  reset();
-  aiAnswers.push({
-    reply: '',
-    actions: [
-      act({
-        type: 'render_client_image',
-        client: 'บ้านลาดพร้าว',
-        title: 'แก้ให้ผนังเป็นสีครีม',
-        version_no: 1,
-      }),
-    ],
-  });
-  await say(SOMCHAI, 'บอท แก้ภาพ บ้านลาดพร้าว เวอร์ชัน 1 ให้ผนังเป็นสีครีม');
-  await bot.flushRenders(G);
-
-  assert.equal(renderCalls.length, 1);
-  assert.equal(renderCalls[0].sourceImage.buffer.toString(), 'RENDER_OUT_1', 'v2 edits v1 output image');
-  const imgMsg2 = sent.find((s) => s.image);
-  assert.ok(imgMsg2);
-  assert.match(imgMsg2.caption, /เวอร์ชัน v2.*แก้ต่อจาก v1/);
-
-  // 3. /เรนเดอร์ บ้านลาดพร้าว shows version history
-  reset();
-  await say(NOK, '/เรนเดอร์ บ้านลาดพร้าว');
-  assert.match(sent.at(-1).text, /v1.*ใช้ผนังขาว หลังคาเทา/);
-  assert.match(sent.at(-1).text, /v2.*แก้ต่อจาก v1.*แก้ให้ผนังเป็นสีครีม/);
-
-  // 4. Daily quota cap refuses further renders when limit reached
-  reset();
-  const savedCap = config.maxRendersPerDay;
-  config.maxRendersPerDay = 2;
-  try {
-    aiAnswers.push({
-      reply: '',
-      actions: [
-        act({
-          type: 'render_client_image',
-          client: 'บ้านลาดพร้าว',
-          title: 'เพิ่มต้นไม้หน้าบ้าน',
-          version_no: 2,
-        }),
-      ],
-    });
-    await say(NOK, 'บอท แก้ภาพเวอร์ชัน 2 เพิ่มต้นไม้หน้าบ้าน');
-    await bot.flushRenders(G);
-    assert.equal(renderCalls.length, 0, 'blocked by daily quota cap');
-    assert.match(sent.at(-1).text, /ครบโควตาสูงสุด 2 ภาพต่อวัน/);
-  } finally {
-    config.maxRendersPerDay = savedCap;
-  }
-});
-
-test('Phase 2 bugfix: image attached with caption, recent image fallback, and error when source image missing', async () => {
-  reset();
+function saveImage(id, from, bytes, { ts = nowTs() - 5 } = {}) {
+  const mediaPath = path.join(tmp, `${id}.png`);
+  fs.writeFileSync(mediaPath, bytes);
+  db.saveMessage({ id, groupJid: G, senderJid: from.jid, senderName: from.name, ts, kind: 'image', text: '', mediaPath });
+  return mediaPath;
+}
+/** Drop earlier test images so "latest image from this person" starts clean. */
+function forgetImages() {
+  for (const r of db.getMessages(G, 0, nowTs() + 60)) if (r.kind === 'image') db.setMediaPath(r.id, null);
+}
+const rowFor = (img) => db.getRender(db.botMessage(img.id).render_id);
+const dims = async (buf) => {
+  const m = await sharp(buf).metadata();
+  return [m.width, m.height];
+};
+// Image incoming as a WhatsApp image message; the bot finds the file by message id in the media folder.
+async function sendImageMsg(from, id, bytes, caption) {
   const dir = path.join(config.mediaDir, G.split('@')[0]);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'DIRECT_IMG_1.jpeg'), 'DIRECT_IMAGE_BYTES');
+  fs.writeFileSync(path.join(dir, `${id}.jpeg`), bytes);
+  await bot.handleMessage(
+    {
+      key: { remoteJid: G, id, participant: from.jid, fromMe: false },
+      pushName: from.name,
+      messageTimestamp: nowTs(),
+      message: { imageMessage: { mimetype: 'image/jpeg', ...(caption ? { caption } : {}) } },
+    },
+    { live: true },
+  );
+}
 
-  aiAnswers.push({
-    reply: '',
-    actions: [
-      act({
-        type: 'render_client_image',
-        client: 'บ้านลาดพร้าว',
-        title: 'เรนเดอร์ภาพจากตัวไฟล์Sketch ตัวนี้',
-        version_no: null,
-      }),
-    ],
-  });
+test('render helpers: request detection, instruction cleanup, prompt rules', async () => {
+  const render = await import('../src/render.js');
+  assert.ok(render.isRenderRequest('เรนเดอร์ warm neutral'));
+  assert.ok(render.isRenderRequest('ช่วยเรนเดอร์ภาพนี้หน่อย'));
+  assert.ok(render.isRenderRequest('render ไฟล์สเก็ต'));
+  assert.ok(!render.isRenderRequest('พรุ่งนี้เตือน @Somchai ส่ง Render'));
+  assert.equal(render.renderInstruction('เรนเดอร์ภาพจากตัวไฟล์Sketch ตัวนี้ ให้เป็นสไตล์ Warm Neutral'), 'ให้เป็นสไตล์ Warm Neutral');
+  assert.equal(render.renderInstruction('เรนเดอร์จากภาพนี้'), '');
+  assert.equal(render.renderInstruction('Render ไฟล์สเก็ต ให้เป็นสไตล์ Warm Neutral Palette'), 'ให้เป็นสไตล์ Warm Neutral Palette');
 
-  const directMsg = {
-    key: { remoteJid: G, id: 'DIRECT_IMG_1', participant: NOK.jid, fromMe: false },
-    pushName: NOK.name,
-    messageTimestamp: nowTs() - 20,
-    message: { imageMessage: { caption: 'บอท เรนเดอร์ภาพจากตัวไฟล์Sketch ตัวนี้ ให้บ้านลาดพร้าว', mimetype: 'image/jpeg' } },
-  };
-
-  await bot.handleMessage(directMsg, { live: true });
-  await bot.flushRenders(G);
-
-  assert.equal(renderCalls.length, 1);
-  assert.equal(renderCalls[0].sourceImage.buffer.toString(), 'DIRECT_IMAGE_BYTES', 'captures image attached directly on current message');
-
-  // 2. Recent image fallback: user sends an image, then sends text asking to render from sent file without quote
-  reset();
-  const recentFile = path.join(tmp, 'recent_image.jpeg');
-  fs.writeFileSync(recentFile, 'RECENT_BYTES');
-  db.saveMessage({
-    id: 'RECENT_IMG_1',
-    groupJid: G,
-    senderJid: SOMCHAI.jid,
-    senderName: 'Somchai',
-    ts: nowTs() - 5,
-    kind: 'image',
-    mediaPath: recentFile,
-  });
-
-  aiAnswers.push({
-    reply: '',
-    actions: [
-      act({
-        type: 'render_client_image',
-        client: 'บ้านลาดพร้าว',
-        title: 'เรนเดอร์ภาพจากไฟล์ Sketch ที่ส่งมา',
-        version_no: null,
-      }),
-    ],
-  });
-
-  await say(SOMCHAI, 'บอท เรนเดอร์ภาพจากไฟล์ Sketch ที่ส่งมา ให้บ้านลาดพร้าว');
-  await bot.flushRenders(G);
-
-  assert.equal(renderCalls.length, 1);
-  assert.equal(renderCalls[0].sourceImage.buffer.toString(), 'RECENT_BYTES', 'fallback picks up recent image sent in group');
-
-  // 3. User says "จากภาพนี้" but no image was sent or quoted -> throws error instead of hallucinating random building
-  reset();
-  db.setMediaPath('SKETCHUP_MSG_1', null);
-  db.setMediaPath('DIRECT_IMG_1', null);
-  db.setMediaPath('RECENT_IMG_1', null);
-  aiAnswers.push({
-    reply: '',
-    actions: [
-      act({
-        type: 'render_client_image',
-        client: 'บ้านลาดพร้าว',
-        title: 'เรนเดอร์จากภาพนี้',
-        version_no: null,
-      }),
-    ],
-  });
-
-  await say(NOK, 'บอท เรนเดอร์บ้านลาดพร้าวจากภาพนี้');
-  await bot.flushRenders(G);
-  assert.equal(renderCalls.length, 0, 'does not call renderImage when source image is missing');
-  assert.match(sent.at(-1).text, /ไม่พบภาพต้นทาง/);
+  const fresh = render.buildRenderPrompt({ instruction: 'warm neutral' });
+  assert.match(fresh, /every piece of furniture/);
+  assert.match(fresh, /Do not add, remove, move, resize/);
+  assert.match(fresh, /grey bands .* only padding/);
+  assert.match(fresh, /Do not add any text/);
+  assert.match(fresh, /warm neutral/);
+  const edit = render.buildRenderPrompt({ instruction: 'ไฟอุ่นขึ้น', isEdit: true });
+  assert.match(edit, /Apply only this change.*ไฟอุ่นขึ้น/);
 });
 
+test('render size: pad to the model canvas, then crop back to the reference size and framing', async () => {
+  const render = await import('../src/render.js');
+  // A wide SketchUp view (2.4:1) -> landscape canvas with grey bands top and bottom.
+  const wide = await render.prepareSource(await solid(1255, 523, '#ff0000'));
+  assert.equal(wide.size, '1536x1024');
+  assert.deepEqual(await dims(wide.buffer), [1536, 1024]);
+  assert.deepEqual(wide.box, { left: 0, top: 192, width: 1536, height: 640 });
+  assert.ok(wide.padded);
+  const top = await sharp(wide.buffer).extract({ left: 700, top: 10, width: 1, height: 1 }).raw().toBuffer();
+  const mid = await sharp(wide.buffer).extract({ left: 700, top: 500, width: 1, height: 1 }).raw().toBuffer();
+  assert.deepEqual([...top].slice(0, 3), [128, 128, 128], 'band is grey padding');
+  assert.deepEqual([...mid].slice(0, 3), [255, 0, 0], 'middle is the sketch');
 
+  // Model output: blue where the sketch was, black in the bands -> cropped result is all blue at 1255x523.
+  const out = await sharp({ create: { width: 1536, height: 1024, channels: 3, background: '#000000' } })
+    .composite([{ input: await solid(1536, 640, '#0000ff'), left: 0, top: 192 }])
+    .png()
+    .toBuffer();
+  const fitted = await render.fitToSource(out, wide);
+  assert.deepEqual(await dims(fitted), [1255, 523]);
+  const stats = await sharp(fitted).stats();
+  assert.ok(stats.channels[2].min > 200 && stats.channels[0].max < 40, 'no band pixels left after the crop');
+
+  // Portrait and square sources pick the matching canvas; exact 3:2 needs no padding.
+  assert.equal((await render.prepareSource(await solid(800, 1200))).size, '1024x1536');
+  assert.equal((await render.prepareSource(await solid(900, 900))).size, '1024x1024');
+  assert.equal((await render.prepareSource(await solid(1500, 1000))).padded, false);
+  // A model that returns a different resolution is scaled before cropping.
+  const half = await sharp(out).resize(768, 512).png().toBuffer();
+  assert.deepEqual(await dims(await render.fitToSource(half, wide)), [1255, 523]);
+});
+
+test('render: reply to a sketch renders it without the AI, keeps layout rules, output matches the sketch size', async () => {
+  reset();
+  forgetImages();
+  saveImage('SKETCH_1', NOK, await solid(1255, 523));
+  await say(NOK, 'บอท เรนเดอร์ warm neutral', { quotedId: 'SKETCH_1' });
+  await bot.flushRenders(G);
+
+  assert.equal(aiCalls.length, 0, 'render requests are routed by code, not by the chat AI');
+  assert.equal(renderCalls.length, 1);
+  assert.equal(renderCalls[0].size, '1536x1024');
+  assert.deepEqual(await dims(renderCalls[0].sourceImage.buffer), [1536, 1024], 'model gets the padded canvas');
+  assert.match(renderCalls[0].prompt, /warm neutral/);
+  assert.match(renderCalls[0].prompt, /every piece of furniture/);
+  assert.doesNotMatch(renderCalls[0].prompt, /บ้านลาดพร้าว|บรีฟ|สำรวจ|แฟ้ม/, 'no client name, stage or dossier text');
+
+  assert.match(sent[0].text, /กำลังเรนเดอร์/);
+  const img = sent.find((x) => x.image);
+  assert.deepEqual(await dims(img.image), [1255, 523], 'sent image has the reference size');
+  assert.match(img.caption, /ภาพเรนเดอร์/);
+  assert.match(img.caption, /สไตล์: warm neutral/);
+  assert.match(img.caption, /ตอบกลับภาพนี้เพื่อสั่งปรับ/);
+  const row = rowFor(img);
+  assert.equal(row.client_id, null);
+  assert.equal(row.source_msg_id, 'SKETCH_1');
+  assert.equal(row.version_no, 1);
+  assert.deepEqual(await dims(fs.readFileSync(row.output_media_path)), [1255, 523]);
+  lastRenderMsgId = img.id;
+});
+
+test('render: replying to a rendered image edits that render', async () => {
+  reset();
+  assert.ok(lastRenderMsgId, 'previous test sent a render');
+  const parent = db.getRender(db.botMessage(lastRenderMsgId).render_id);
+  await say(SOMCHAI, 'ไฟอุ่นขึ้น', { quotedId: lastRenderMsgId });
+  await bot.flushRenders(G);
+
+  assert.equal(aiCalls.length, 0);
+  assert.equal(renderCalls.length, 1);
+  assert.match(renderCalls[0].prompt, /Apply only this change.*ไฟอุ่นขึ้น/);
+  const img = sent.find((x) => x.image);
+  assert.match(img.caption, /ภาพที่ปรับแล้ว/);
+  assert.deepEqual(await dims(img.image), [1255, 523], 'edits keep the size too');
+  const row = rowFor(img);
+  assert.equal(row.source_media_path, parent.output_media_path, 'edits the quoted render output');
+  assert.equal(row.parent_id, parent.id);
+  assert.equal(row.version_no, 2);
+});
+
+test('render: image sent with the caption "บอท เรนเดอร์" uses that image', async () => {
+  reset();
+  forgetImages();
+  await sendImageMsg(NOK, 'CAPTION_IMG_1', await solid(1200, 900), 'บอท เรนเดอร์ภาพจากตัวไฟล์Sketch ตัวนี้ ให้บ้านลาดพร้าว');
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 1);
+  const img = sent.find((x) => x.image);
+  assert.equal(rowFor(img).source_msg_id, 'CAPTION_IMG_1');
+  assert.deepEqual(await dims(img.image), [1200, 900]);
+});
+
+test('render: no sketch -> bot asks once, then starts when that person sends an image', async () => {
+  reset();
+  forgetImages();
+  await say(NOK, 'บอท เรนเดอร์ Warm Neutral Palette');
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 0, 'never draws from text alone');
+  assert.match(sent.at(-1).text, /ส่งสเก็ตมาได้เลย/);
+
+  // Someone else's image does not start Nok's render.
+  await sendImageMsg(SOMCHAI, 'OTHER_IMG', await solid(400, 300));
+  await bot.flushTaskSync(G); // a plain image schedules task capture; not under test here
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 0);
+
+  await sendImageMsg(NOK, 'LATE_SKETCH', await solid(1000, 600));
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 1);
+  assert.match(renderCalls[0].prompt, /Warm Neutral Palette/, 'keeps the style typed earlier');
+  assert.equal(rowFor(sent.find((x) => x.image)).source_msg_id, 'LATE_SKETCH');
+  assert.equal(aiCalls.length, 0);
+
+  // The wait is used up: a later image does not render again.
+  reset();
+  await sendImageMsg(NOK, 'ANOTHER_IMG', await solid(400, 300));
+  await bot.flushTaskSync(G);
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 0);
+});
+
+test('render: plain "บอท เรนเดอร์" uses this person\'s latest image from the last 30 minutes', async () => {
+  reset();
+  forgetImages();
+  saveImage('OLD_SKETCH', SOMCHAI, await solid(400, 300), { ts: nowTs() - 3600 });
+  saveImage('NOK_SKETCH', NOK, await solid(400, 300), { ts: nowTs() - 30 });
+  saveImage('SOMCHAI_SKETCH', SOMCHAI, await solid(640, 480), { ts: nowTs() - 60 });
+  await say(SOMCHAI, 'บอท เรนเดอร์');
+  await bot.flushRenders(G);
+  assert.equal(renderCalls.length, 1);
+  assert.equal(rowFor(sent.find((x) => x.image)).source_msg_id, 'SOMCHAI_SKETCH');
+  assert.match(renderCalls[0].prompt, /No style was given/);
+});
+
+test('render: no daily limit by default; MAX_RENDERS_PER_DAY > 0 caps it; /เรนเดอร์ shows usage', async () => {
+  reset();
+  assert.equal(config.maxRendersPerDay, 0);
+  const saved = config.maxRendersPerDay;
+  config.maxRendersPerDay = 1;
+  try {
+    saveImage('CAP_SKETCH', NOK, await solid(400, 300));
+    await say(NOK, 'บอท เรนเดอร์', { quotedId: 'CAP_SKETCH' });
+    await bot.flushRenders(G);
+    assert.equal(renderCalls.length, 0);
+    assert.match(sent.at(-1).text, /วันนี้เรนเดอร์ครบ 1 ภาพแล้ว/);
+  } finally {
+    config.maxRendersPerDay = saved;
+  }
+  reset();
+  await say(NOK, '/เรนเดอร์');
+  assert.match(sent.at(-1).text, /วันนี้ \d+ ภาพ · 7 วัน \d+ ภาพ/);
+  assert.match(sent.at(-1).text, /บอท เรนเดอร์/);
+});
+
+test('isNetworkError survives dropped connections only', () => {
+  const terminated = Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
+  assert.ok(bot.isNetworkError(terminated));
+  assert.ok(bot.isNetworkError(Object.assign(new Error('x'), { code: 'ETIMEDOUT' })));
+  assert.ok(!bot.isNetworkError(new TypeError('Cannot read properties of undefined')));
+});

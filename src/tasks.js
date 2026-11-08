@@ -1,5 +1,5 @@
 // Phase 1: tasks, reminders and the morning briefing.
-// Phase 2: Q&A over history, client dossiers, note provenance/revisions, and render jobs.
+// Phase 2: Q&A over history, client dossiers, and note provenance/revisions. (Renders live in src/render.js.)
 // The AI only turns chat into structured actions; this file applies them to the database
 // and writes every confirmation itself, so the bot never claims something it didn't do.
 
@@ -157,17 +157,11 @@ export function formatClientDossier(groupJid, query) {
     }
   }
   if (!notes.length) lines.push('\n_(ยังไม่มีบันทึกรายละเอียดในแฟ้ม)_');
-  const renders = db.clientRenders(c.id, groupJid);
-  if (renders.length) {
-    const latest = renders[renders.length - 1];
-    lines.push(`\n🖼️ *ภาพเรนเดอร์ (${renders.length} เวอร์ชัน — ล่าสุด v${latest.version_no})*`);
-    lines.push(`- v${latest.version_no}${latest.parent_version ? ` (แก้จาก v${latest.parent_version})` : ''}: ${latest.prompt}`);
-  }
   if (tasks.length) {
     lines.push(`\n📌 *งานค้าง (${tasks.length})*`);
     for (const t of tasks) lines.push(taskLine(t, { withClient: false }));
   }
-  lines.push('\nดูรายละเอียด/ที่มา/ประวัติ: /โน้ต <เลข> · /ที่มา <เลข> · /ประวัติโน้ต <เลข> · /เรนเดอร์ ชื่อบ้าน · /ลบโน้ต <เลข>');
+  lines.push('\nดูรายละเอียด/ที่มา/ประวัติ: /โน้ต <เลข> · /ที่มา <เลข> · /ประวัติโน้ต <เลข> · /ลบโน้ต <เลข>');
   return lines.join('\n');
 }
 
@@ -227,59 +221,6 @@ export function formatNoteHistory(groupJid, noteId) {
 
 export function localDayStartTs(ts = nowTs()) {
   return parseLocal(`${localDay(ts)} 00:00`) ?? ts - 86400;
-}
-
-export function clientSpecSnapshot(clientId) {
-  const notes = db.clientNotes(clientId).filter((n) => ['brief', 'spec', 'change'].includes(n.category));
-  if (!notes.length) return '';
-  return notes.map((n) => `[${CATEGORY_LABEL[n.category] || n.category} #N${n.id}] ${n.text}`).join(' | ');
-}
-
-export function buildRenderPrompt({ client, instruction, specSnapshot, isEdit = false }) {
-  const parts = [
-    `งานเรนเดอร์สถาปัตยกรรมสำหรับโปรเจกต์ "${client.name}" (${STAGE_LABEL[client.stage] || client.stage})`,
-    isEdit
-      ? 'ข้อกำหนดสำคัญ: ต้องใช้ภาพต้นทางที่แนบมาเป็นโครงสร้างหลัก ห้ามเปลี่ยนโครงสร้าง สัดส่วน มุมมอง และตำแหน่งช่องเปิดเดิมของอาคารหรือห้อง ให้เรนเดอร์ปรับปรุงเฉพาะวัสดุ พื้นผิว สี แสง บรรยากาศ และรายละเอียดตามคำสั่งนี้:'
-      : 'สร้างภาพเรนเดอร์สถาปัตยกรรมตามคำสั่งนี้:',
-    `คำสั่ง: ${instruction}`,
-    specSnapshot ? `สเปกและบรีฟปัจจุบันจากแฟ้มลูกค้า: ${specSnapshot}` : null,
-  ];
-  return parts.filter(Boolean).join('\n');
-}
-
-export function formatRenderCaption(client, versionNo, job) {
-  const parentTag = job.parentVersion ? ` (แก้ต่อจาก v${job.parentVersion})` : '';
-  const specLine = job.specSnapshot ? `\nสเปกจากแฟ้มที่ใช้: ${job.specSnapshot}` : '';
-  return [
-    `🖼️ *ภาพเรนเดอร์ ${client.name} — เวอร์ชัน v${versionNo}*${parentTag}`,
-    `คำสั่ง: ${job.instruction}${specLine}`,
-    `⚠️ _ภาพแนวคิดสำหรับทดลองวัสดุ สี แสง และบรรยากาศ อาจเปลี่ยนรายละเอียดบางจุด ต้องตรวจเทียบมิติและช่องเปิดกับแบบต้นฉบับเสมอครับ_`,
-    `สั่งแก้ต่อได้ เช่น "บอท แก้ภาพ ${client.name} เวอร์ชัน ${versionNo} ให้..."`,
-  ].join('\n');
-}
-
-export function formatClientRenders(groupJid, query) {
-  if (!query) {
-    return '🤖 พิมพ์ชื่อบ้านต่อท้ายเพื่อดูประวัติภาพเรนเดอร์ เช่น /เรนเดอร์ บ้านลาดพร้าว';
-  }
-  const c = db.findClient(groupJid, query);
-  if (!c) return '🤖 ไม่พบลูกค้าชื่อนี้ครับ ดูรายชื่อทั้งหมดได้ด้วย /ลูกค้า';
-  const renders = db.clientRenders(c.id, groupJid);
-  const usedToday = db.rendersCountSince(groupJid, localDayStartTs());
-  if (!renders.length) {
-    return `🖼️ *ประวัติภาพเรนเดอร์: ${c.name}*\nยังไม่มีภาพเรนเดอร์ในแฟ้มครับ\nส่งรูปจาก SketchUp แล้วตอบกลับรูปว่า "บอท เรนเดอร์ ${c.name} จากภาพนี้ ..." ได้เลย (โควตาวันนี้ ${usedToday}/${config.maxRendersPerDay} ภาพ)`;
-  }
-  const lines = [`🖼️ *ประวัติภาพเรนเดอร์: ${c.name}* (${renders.length} เวอร์ชัน)`];
-  for (const r of renders) {
-    const parent = r.parent_version ? ` (แก้ต่อจาก v${r.parent_version})` : r.source_msg_id ? ' (จากภาพต้นทางในแชท)' : '';
-    const who = r.created_by ? ` · โดย ${r.created_by}` : '';
-    const when = r.created_at ? ` · ${fmtWhen(r.created_at)}` : '';
-    lines.push(`- *v${r.version_no}*${parent}: ${r.prompt}${who}${when}`);
-    if (r.spec_snapshot) lines.push(`  สเปกที่ใช้: ${r.spec_snapshot}`);
-  }
-  lines.push(`\nโควตาเรนเดอร์กลุ่มวันนี้: ${usedToday}/${config.maxRendersPerDay} ภาพ`);
-  lines.push(`สั่งแก้ต่อได้ เช่น "บอท แก้ภาพ ${c.name} เวอร์ชัน ${renders[renders.length - 1].version_no} ให้..."`);
-  return lines.join('\n');
 }
 
 export function formatTaskList(groupJid) {
@@ -371,7 +312,6 @@ const ACTION_TYPES = [
   'add_client_note',
   'edit_client_note',
   'delete_client_note',
-  'render_client_image',
 ];
 const REPEATS = ['none', 'daily', 'weekdays', 'weekly', 'monthly'];
 
@@ -473,7 +413,7 @@ const REQUEST_SYSTEM = `คุณคือผู้ช่วยในกลุ�
 - add_client_note: บันทึกข้อมูลสำคัญลงแฟ้มลูกค้า ใส่ client = ชื่อลูกค้า, category = หมวด (brief=บรีฟ/โจทย์, spec=สเปกวัสดุ, change=สั่งแก้แบบ/VO, site=หน้างาน/Defect, link=ลิงก์สำคัญ), title = เนื้อหาที่บันทึก
 - edit_client_note: แก้ไขบันทึกในแฟ้มลูกค้าที่มีอยู่และเก็บประวัติฉบับก่อนหน้า ใส่ note_id = เลขโน้ต (เช่น #N12 -> 12), title = เนื้อหาใหม่ที่แก้ไขแล้ว, category = หมวด (ถ้าเปลี่ยน หรือใช้หมวดเดิม)
 - delete_client_note: ลบบันทึกในแฟ้มลูกค้าที่จำผิด ใส่ note_id = เลขโน้ต (เช่น #N3 -> 3)
-- render_client_image: สร้างภาพเรนเดอร์สถาปัตยกรรมหรือแก้ไขภาพเรนเดอร์ของลูกค้าด้วยโมเดลสร้างภาพ (เมื่อสั่ง "เรนเดอร์...", "สร้างภาพ...", หรือ "แก้ภาพ...") ใส่ client = ชื่อลูกค้า/ชื่อบ้าน, title = คำสั่งเรนเดอร์หรือรายละเอียดที่ต้องการแก้, version_no = เลขเวอร์ชันภาพเดิมที่ต้องการแก้ต่อ (เช่น "แก้ภาพเวอร์ชัน 2..." ให้ใส่ 2; ถ้าเรนเดอร์ใหม่จากภาพต้นทางที่ตอบกลับให้เป็น null)
+- (ไม่มี action สำหรับสร้างภาพ) ถ้าถูกขอให้เรนเดอร์/สร้างภาพ ให้ actions = [] และตอบว่า ส่งสเก็ตพร้อมพิมพ์ "บอท เรนเดอร์ ตามด้วยสไตล์" หรือตอบกลับภาพเรนเดอร์เพื่อสั่งปรับ
 
 กติกา:
 - when ใช้รูปแบบ "YYYY-MM-DD HH:MM" เวลาไทยเสมอ คำนวณจาก "เวลาตอนนี้" เช่น "บ่ายสาม" = 15:00, "2 ทุ่ม" = 20:00, "พรุ่งนี้เช้า" = 09:00, "ศุกร์หน้า" = วันศุกร์ของสัปดาห์หน้า ถ้าบอกแค่วันไม่บอกเวลา ใช้ 09:00 ถ้าเวลาที่ได้ผ่านไปแล้ววันนี้ ให้เป็นวันถัดไป
@@ -493,10 +433,10 @@ ${ABOUT_FOR_AI}`;
 /**
  * Someone addressed the bot. Turn the request into actions, apply them, and return the reply text.
  * @param {{ groupJid: string, senderName: string, senderJid: string, text: string,
- *   messageId?: string|null, quotedMsg?: object|null, sourceMediaPath?: string|null, sourceMsgId?: string|null, quotedRender?: object|null,
+ *   messageId?: string|null,
  *   quoted?: { text?: string, task?: object|null, reminder?: object|null } | null,
  *   people: string[], resolve: (name: string) => string|null }} p
- * @returns {Promise<{ text: string, mentions: string[], renderJobs?: object[] }>}
+ * @returns {Promise<{ text: string, mentions: string[] }>}
  */
 export async function handleRequest(p) {
   const recent = db.getMessages(p.groupJid, nowTs() - config.qaContextDays * DAY, nowTs())
@@ -525,21 +465,19 @@ export async function handleRequest(p) {
 
   const confirmations = [];
   const mentions = [];
-  const renderJobs = [];
   for (const a of result.actions || []) {
     try {
       const line = applyAction(a, p);
       if (line) {
         confirmations.push(line.text);
         mentions.push(...line.mentions);
-        if (line.renderJob) renderJobs.push(line.renderJob);
       }
     } catch (err) {
       confirmations.push(`⚠️ ทำไม่ได้: ${err.message}`);
     }
   }
   const text = [result.reply?.trim(), ...confirmations].filter(Boolean).join('\n');
-  return { text: text || '🤖 ไม่แน่ใจว่าต้องทำอะไร ลองพิมพ์ใหม่อีกครั้งนะครับ', mentions, renderJobs };
+  return { text: text || '🤖 ไม่แน่ใจว่าต้องทำอะไร ลองพิมพ์ใหม่อีกครั้งนะครับ', mentions };
 }
 
 function mentionFor(jid, name) {
@@ -686,72 +624,6 @@ function applyAction(a, p) {
       if (!note || note.group_jid !== p.groupJid) throw new Error('ไม่พบบันทึกเลขนี้ (ดูเลข #N ได้ใน /ลูกค้า ชื่อบ้าน)');
       db.deleteClientNote(note.id, p.groupJid);
       return { text: `🗑️ ลบบันทึก #N${note.id}: ${note.text}`, mentions: [] };
-    }
-    case 'render_client_image': {
-      const c =
-        (a.client && db.findClient(p.groupJid, a.client)) ||
-        (p.quotedRender && db.getClient(p.quotedRender.client_id)) ||
-        null;
-      if (!c || c.group_jid !== p.groupJid) {
-        throw new Error('ต้องระบุชื่อลูกค้าหรือบ้านที่จะเรนเดอร์ภาพด้วยครับ (ดูรายชื่อด้วย /ลูกค้า)');
-      }
-      const usedToday = db.rendersCountSince(p.groupJid, localDayStartTs());
-      if (usedToday >= config.maxRendersPerDay) {
-        throw new Error(`วันนี้เรนเดอร์ภาพครบโควตาสูงสุด ${config.maxRendersPerDay} ภาพต่อวันแล้วครับ (เพดานควบคุมค่าใช้จ่าย)`);
-      }
-      const instruction = (a.title || p.text || '').trim();
-      if (!instruction) throw new Error('ต้องระบุคำสั่งเรนเดอร์หรือสิ่งที่ต้องการปรับแก้ครับ');
-
-      let sourceMediaPath = null;
-      let sourceMsgId = null;
-      let parentVersion = null;
-      if (a.version_no != null) {
-        const prev = db.getClientRenderByVersion(c.id, a.version_no, p.groupJid);
-        if (!prev) {
-          throw new Error(`ไม่พบภาพเรนเดอร์เวอร์ชัน v${a.version_no} ของ ${c.name} (ดูรายการด้วย /เรนเดอร์ ${c.name})`);
-        }
-        sourceMediaPath = prev.output_media_path || prev.source_media_path;
-        parentVersion = prev.version_no;
-      } else if (p.quotedRender && p.quotedRender.client_id === c.id) {
-        sourceMediaPath = p.quotedRender.output_media_path || p.quotedRender.source_media_path;
-        parentVersion = p.quotedRender.version_no;
-      } else if (p.sourceMediaPath) {
-        sourceMediaPath = p.sourceMediaPath;
-        sourceMsgId = p.sourceMsgId || null;
-      } else if (/(แก้ภาพ|ปรับภาพ|แก้เรนเดอร์)/.test(instruction)) {
-        const latest = db.getClientRenderByVersion(c.id, null, p.groupJid);
-        if (latest) {
-          sourceMediaPath = latest.output_media_path || latest.source_media_path;
-          parentVersion = latest.version_no;
-        }
-      }
-
-      if (!sourceMediaPath && !parentVersion && /(จากภาพ|จากรูป|จากไฟล์|สเก็ต|sketch|ภาพนี้|รูปนี้|ตัวนี้|แบบนี้)/i.test(instruction)) {
-        throw new Error('ไม่พบภาพต้นทาง (SketchUp/ภาพหน้างาน) ครับ กรุณาส่งภาพพร้อมคำสั่ง หรือตอบกลับรูปที่ต้องการเรนเดอร์');
-      }
-
-      const specSnapshot = clientSpecSnapshot(c.id);
-      const fullPrompt = buildRenderPrompt({
-        client: c,
-        instruction,
-        specSnapshot,
-        isEdit: Boolean(sourceMediaPath),
-      });
-      return {
-        text: `🎨 รับคำสั่งเรนเดอร์ภาพ *${c.name}*${parentVersion ? ` (แก้ต่อจาก v${parentVersion})` : ''} ด้วย ${config.openaiImageModel} กำลังสร้างภาพในคิวเบื้องหลังครับ...`,
-        mentions: [],
-        renderJob: {
-          groupJid: p.groupJid,
-          client: c,
-          instruction,
-          fullPrompt,
-          specSnapshot,
-          sourceMediaPath,
-          sourceMsgId,
-          parentVersion,
-          requestedBy: by,
-        },
-      };
     }
     case 'remind': {
       if (!when) throw new Error('ไม่รู้ว่าจะให้เตือนเมื่อไหร่');

@@ -29,6 +29,7 @@ import { describeMedia } from './describe.js';
 import { summarize } from './summarize.js';
 import { explainError, hasCredentials, NO_KEY_MESSAGE, renderImage } from './ai.js';
 import * as tasks from './tasks.js';
+import * as render from './render.js';
 import { INTRO } from './about.js';
 
 
@@ -60,8 +61,8 @@ const HELP = `🤖 *วิธีใช้บอท*
 - บอท ทุกวันจันทร์ 9 โมง เตือนทุกคนอัปเดตงาน
 - บอท งาน #3 เสร็จแล้ว / เลื่อนงาน #3 เป็นศุกร์นี้
 - บอท ลิงก์ Drive ล่าสุดอยู่ไหน / บ้านลาดพร้าวขอแก้อะไรบ้าง
-- บอท เรนเดอร์บ้านลาดพร้าวจากภาพนี้ ผนังขาว หลังคาเทา ตามสเปกในแฟ้ม
-- บอท แก้ภาพบ้านลาดพร้าว เวอร์ชัน 1 ให้ผนังเป็นสีครีม
+- ส่งสเก็ต SketchUp พร้อมพิมพ์ "บอท เรนเดอร์ warm neutral" — ได้ภาพเหมือนจริง เฟอร์นิเจอร์ตรงตามสเก็ต
+- ตอบกลับภาพเรนเดอร์ว่า "ไฟอุ่นขึ้น" — ปรับต่อจากภาพนั้น
 - /ลบข้อมูล — แอดมินลบข้อมูลที่บอทเก็บของกลุ่มนี้ (ต้องยืนยัน)
 
 *ตอบข้อความเตือน* — ตอบกลับว่า "เสร็จแล้ว" หรือกด ✅ เพื่อปิดงาน, "เลื่อน 1 ชม." เพื่อเลื่อน
@@ -71,7 +72,6 @@ const HELP = `🤖 *วิธีใช้บอท*
 - */โน้ต 3* — ดูบันทึก #N3 (ฉบับปัจจุบัน) · */ที่มา 3* — ดูข้อความต้นทาง · */ประวัติโน้ต 3* — ดูประวัติการแก้ไข
 - */แก้โน้ต 3 ข้อความใหม่* — แก้ไขบันทึก #N3 โดยเก็บประวัติเดิม
 - */ลบโน้ต 3* — ลบบันทึก #N3 ในแฟ้มลูกค้า
-- */เรนเดอร์ ชื่อบ้าน* — ดูประวัติภาพเรนเดอร์และเวอร์ชันทั้งหมดของบ้าน (โควตาสูงสุด ${config.maxRendersPerDay} ภาพ/วัน)
 - */งาน* — งานที่ยังเปิดอยู่ทั้งหมด
 - */เสร็จ 3* — ปิดงาน #3 · */ยกเลิก 3* — ยกเลิกงาน #3
 - */สรุป* — สรุปแชทตั้งแต่ครั้งล่าสุด · */สรุป 2 วัน* — ย้อนหลังตามช่วงเวลา
@@ -203,6 +203,10 @@ async function sendImage(jid, buffer, { caption = null, mentions = [], renderId 
 // Background queue for architectural image generation so it never blocks chat or reminders.
 let renderRunning = false;
 const renderQueue = [];
+// "บอท เรนเดอร์" without a sketch: wait a few minutes for that person's next image.
+const renderWaits = new Map(); // `${groupJid}|${senderJid}` -> { instruction, until }
+const RENDER_WAIT_MS = 10 * 60_000;
+const RECENT_SKETCH_SECONDS = 30 * 60;
 
 function enqueueRender(job) {
   renderQueue.push(job);
@@ -217,7 +221,7 @@ async function pumpRenders() {
     await executeRenderJob(job);
   } catch (err) {
     log('เรนเดอร์ภาพไม่สำเร็จ:', explainError(err));
-    await send(job.groupJid, `⚠️ ไม่สามารถเรนเดอร์ภาพ ${job.client?.name || ''} ได้: ${explainError(err)}`).catch(() => {});
+    await send(job.groupJid, `⚠️ เรนเดอร์ไม่สำเร็จ: ${explainError(err)}`, { quoted: job.quotedMsgRef || null }).catch(() => {});
   } finally {
     renderRunning = false;
     pumpRenders();
@@ -230,56 +234,63 @@ async function flushRenders(groupJid = null) {
   }
 }
 
+/**
+ * Queue a render and tell the group it started. Refuses (never draws from text alone) when the
+ * source image is missing, and enforces MAX_RENDERS_PER_DAY when it is above 0.
+ * @param {{ groupJid: string, sourceMediaPath: string, sourceMsgId?: string|null, parentId?: number|null,
+ *   instruction: string, isEdit: boolean, requestedBy: string, quotedMsgRef?: object|null }} job
+ */
+async function startRender(job) {
+  if (!job.sourceMediaPath || !fs.existsSync(job.sourceMediaPath)) {
+    return send(job.groupJid, '⚠️ เปิดรูปต้นทางไม่ได้ครับ ลองส่งสเก็ตใหม่อีกครั้ง', { quoted: job.quotedMsgRef || null, kind: 'reply' });
+  }
+  if (config.maxRendersPerDay > 0 && db.rendersCountSince(job.groupJid, tasks.localDayStartTs()) >= config.maxRendersPerDay) {
+    return send(job.groupJid, `⚠️ วันนี้เรนเดอร์ครบ ${config.maxRendersPerDay} ภาพแล้วครับ`, { quoted: job.quotedMsgRef || null, kind: 'reply' });
+  }
+  enqueueRender(job);
+  return send(job.groupJid, render.STARTED, { quoted: job.quotedMsgRef || null, kind: 'reply' });
+}
+
+/** The newest image this person sent in the last 30 minutes. */
+function recentSketchFrom(groupJid, senderJid) {
+  const nowTs = Math.floor(Date.now() / 1000);
+  return db
+    .getMessages(groupJid, nowTs - RECENT_SKETCH_SECONDS, nowTs)
+    .filter((r) => r.kind === 'image' && r.sender_jid === senderJid && r.media_path && fs.existsSync(r.media_path))
+    .pop() || null;
+}
+
 async function executeRenderJob(job) {
   if (job.groupJid && db.deletedThrough(job.groupJid) >= Math.floor(Date.now() / 1000)) return;
 
-  let sourceImage = null;
-  if (job.sourceMediaPath && fs.existsSync(job.sourceMediaPath)) {
-    const buf = fs.readFileSync(job.sourceMediaPath);
-    const ext = path.extname(job.sourceMediaPath).toLowerCase() || '.png';
-    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    sourceImage = {
-      buffer: buf,
-      mime,
-      filename: path.basename(job.sourceMediaPath),
-    };
-  }
-
+  // Pad to the model's canvas, then crop back: the result has the reference's framing and pixel size.
+  const prep = await render.prepareSource(fs.readFileSync(job.sourceMediaPath));
   const res = await renderImage({
-    prompt: job.fullPrompt,
-    sourceImage,
+    prompt: render.buildRenderPrompt({ instruction: job.instruction, isEdit: job.isEdit }),
+    sourceImage: { buffer: prep.buffer, mime: 'image/png', name: 'source.png' },
     quality: config.imageQuality,
-    size: '1024x1024',
+    size: prep.size,
   });
+  const output = await render.fitToSource(res.buffer, prep);
 
-  const groupFolder = job.groupJid.split('@')[0];
-  const dir = path.join(config.mediaDir, groupFolder);
+  const dir = path.join(config.mediaDir, job.groupJid.split('@')[0]);
   fs.mkdirSync(dir, { recursive: true });
-  const ext = res.mime === 'image/jpeg' ? 'jpg' : res.mime === 'image/webp' ? 'webp' : 'png';
+  const outputMediaPath = path.join(dir, `render_${Date.now()}.png`);
+  fs.writeFileSync(outputMediaPath, output);
 
-  const renders = db.clientRenders(job.client.id, job.groupJid);
-  const nextVersion = (renders.length ? Math.max(...renders.map((r) => r.version_no)) : 0) + 1;
-  const outputFileName = `render_${job.client.id}_v${nextVersion}.${ext}`;
-  const outputMediaPath = path.join(dir, outputFileName);
-  fs.writeFileSync(outputMediaPath, res.buffer);
-
-  const { id: renderId, versionNo } = db.addClientRender({
+  const renderId = db.addRender({
     groupJid: job.groupJid,
-    clientId: job.client.id,
-    parentVersion: job.parentVersion,
-    sourceMsgId: job.sourceMsgId,
+    parentId: job.parentId ?? null,
+    sourceMsgId: job.sourceMsgId ?? null,
     sourceMediaPath: job.sourceMediaPath,
     outputMediaPath,
     prompt: job.instruction,
-    specSnapshot: job.specSnapshot,
     model: res.model || config.openaiImageModel,
-    status: 'done',
     createdBy: job.requestedBy,
   });
 
-  const caption = tasks.formatRenderCaption(job.client, versionNo, job);
-  await sendImage(job.groupJid, res.buffer, {
-    caption,
+  await sendImage(job.groupJid, output, {
+    caption: render.formatRenderCaption(job),
     renderId,
     quoted: job.quotedMsgRef || null,
   });
@@ -371,6 +382,55 @@ function scheduleTaskSync(groupJid) {
 
 const DONE_WORDS = /^(✅|✔️|☑️|👍|เสร็จ|เรียบร้อย|ทำแล้ว|ส่งแล้ว|done|ok แล้ว)/i;
 
+/**
+ * Render requests are routed by code, not by the AI, so they always do the same thing:
+ * - reply to a rendered image  -> edit that render with the reply text;
+ * - "บอท เรนเดอร์ ..."          -> render the attached / quoted / recently sent sketch,
+ *                                 or ask for one and start when it arrives.
+ * Returns the send result when handled, otherwise null.
+ */
+async function handleRenderRequest(m, { groupJid, senderName, senderJid, cleaned, botMsg, quotedMsgId }) {
+  const quotedRender = botMsg?.render_id ? db.getRender(botMsg.render_id) : null;
+  if (quotedRender) {
+    const instruction = cleaned.trim();
+    if (!instruction) return send(groupJid, 'อยากปรับอะไรในภาพนี้ครับ เช่น "ไฟอุ่นขึ้น"', { quoted: m, kind: 'reply' });
+    return startRender({
+      groupJid,
+      sourceMediaPath: quotedRender.output_media_path,
+      parentId: quotedRender.id,
+      instruction,
+      isEdit: true,
+      requestedBy: senderName,
+      quotedMsgRef: m,
+    });
+  }
+  if (!render.isRenderRequest(cleaned)) return null;
+
+  const instruction = render.renderInstruction(cleaned);
+  let quotedMsg = quotedMsgId ? db.getMessage(groupJid, quotedMsgId) : null;
+  if (quotedMsg?.kind === 'image' && (!quotedMsg.media_path || !fs.existsSync(quotedMsg.media_path))) {
+    await waitForMedia(groupJid, 10_000);
+    quotedMsg = db.getMessage(groupJid, quotedMsgId);
+  }
+  const currentMsg = m?.key?.id ? db.getMessage(groupJid, m.key.id) : null;
+  const source = [quotedMsg, currentMsg].find((r) => r?.kind === 'image' && r.media_path && fs.existsSync(r.media_path))
+    || recentSketchFrom(groupJid, senderJid);
+  if (!source) {
+    renderWaits.set(`${groupJid}|${senderJid}`, { instruction, until: Date.now() + RENDER_WAIT_MS });
+    return send(groupJid, render.ASK_FOR_SKETCH, { quoted: m, kind: 'reply' });
+  }
+  renderWaits.delete(`${groupJid}|${senderJid}`);
+  return startRender({
+    groupJid,
+    sourceMediaPath: source.media_path,
+    sourceMsgId: source.id,
+    instruction,
+    isEdit: false,
+    requestedBy: senderName,
+    quotedMsgRef: m,
+  });
+}
+
 /** Someone talked to the bot (mention, its name, or a reply to one of its messages). */
 async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, botMsg, quotedText, quotedMsgId = null }) {
   const task = botMsg?.task_id ? db.getTask(botMsg.task_id) : null;
@@ -393,43 +453,8 @@ async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, b
   if (/^(?:ลบข้อมูล|ล้างข้อมูล)(?:\s|ทั้งหมด|กลุ่มนี้|$)/.test(cleaned)) {
     return handleDeletion(groupJid, senderJid, '');
   }
-  let quotedMsg = quotedMsgId ? db.getMessage(groupJid, quotedMsgId) : null;
-  if (quotedMsg && quotedMsg.kind === 'image' && (!quotedMsg.media_path || !fs.existsSync(quotedMsg.media_path))) {
-    await waitForMedia(groupJid, 10_000);
-    quotedMsg = db.getMessage(groupJid, quotedMsgId);
-  }
-  const botMsgForQuoted = quotedMsgId ? db.botMessage(quotedMsgId) : null;
-  const quotedRender =
-    (botMsg?.render_id && db.getClientRender(botMsg.render_id)) ||
-    (botMsgForQuoted?.render_id && db.getClientRender(botMsgForQuoted.render_id)) ||
-    null;
-
-  let sourceMediaPath = null;
-  let sourceMsgId = null;
-  if (quotedMsg?.media_path && fs.existsSync(quotedMsg.media_path)) {
-    sourceMediaPath = quotedMsg.media_path;
-    sourceMsgId = quotedMsg.id;
-  } else if (quotedRender) {
-    sourceMediaPath = quotedRender.output_media_path || quotedRender.source_media_path;
-  } else {
-    const currentMsg = m?.key?.id ? db.getMessage(groupJid, m.key.id) : null;
-    if (currentMsg?.media_path && fs.existsSync(currentMsg.media_path)) {
-      sourceMediaPath = currentMsg.media_path;
-      sourceMsgId = currentMsg.id;
-    }
-  }
-
-  // Fallback: if user asked to render from an image/sketch without quoting or on a separate message
-  if (!sourceMediaPath && !quotedRender && /(จากภาพ|จากรูป|จากไฟล์|สเก็ต|sketch|ภาพนี้|รูปนี้|ตัวนี้|แบบนี้)/i.test(text)) {
-    const recentImages = db
-      .getMessages(groupJid, Math.floor(Date.now() / 1000) - 1800, Math.floor(Date.now() / 1000))
-      .filter((r) => r.kind === 'image' && r.media_path && fs.existsSync(r.media_path));
-    const latest = recentImages.pop();
-    if (latest) {
-      sourceMediaPath = latest.media_path;
-      sourceMsgId = latest.id;
-    }
-  }
+  const handled = await handleRenderRequest(m, { groupJid, senderName, senderJid, cleaned, botMsg, quotedMsgId });
+  if (handled) return handled;
 
   const res = await tasks.handleRequest({
     groupJid,
@@ -437,20 +462,11 @@ async function handleRequest(m, { groupJid, meta, senderName, senderJid, text, b
     senderJid,
     text: cleaned || text,
     messageId: m?.key?.id || null,
-    quotedMsg,
+    quotedMsg: quotedMsgId ? db.getMessage(groupJid, quotedMsgId) : null, // note provenance
     quoted: botMsg ? { text: quotedText, task, reminder } : quotedText ? { text: quotedText, task: null, reminder: null } : null,
-    quotedRender,
-    sourceMediaPath,
-    sourceMsgId,
     people: peopleIn(meta),
     resolve: (n) => resolvePerson(meta, n),
   });
-  if (res.renderJobs?.length) {
-    for (const job of res.renderJobs) {
-      job.quotedMsgRef = m;
-      enqueueRender(job);
-    }
-  }
   return send(groupJid, res.text, { mentions: res.mentions, quoted: m, kind: 'reply' });
 }
 
@@ -617,6 +633,24 @@ async function processMessage(m, { live, late = false }) {
   if (!live || fromBot || !isNew) return;
   if (late) await handleLateNotice(m, groupJid, ts, text, ctx);
 
+  // The sketch someone was asked for after "บอท เรนเดอร์" with nothing attached.
+  const waitKey = `${groupJid}|${senderJid}`;
+  const wait = kind === 'image' ? renderWaits.get(waitKey) : null;
+  if (wait) {
+    renderWaits.delete(waitKey);
+    if (wait.until > Date.now() && !(text && isAddressed(text, ctx))) {
+      return startRender({
+        groupJid,
+        sourceMediaPath: db.getMessage(groupJid, id)?.media_path,
+        sourceMsgId: id,
+        instruction: [wait.instruction, text].filter(Boolean).join(' '),
+        isEdit: false,
+        requestedBy: senderName,
+        quotedMsgRef: m,
+      });
+    }
+  }
+
   if (text?.startsWith('/')) {
     await handleCommand(groupJid, groupName, text.trim(), { m, meta, senderName, senderJid }).catch((err) =>
       send(groupJid, `🤖 ทำไม่สำเร็จ: ${explainError(err)}`),
@@ -733,7 +767,13 @@ async function handleCommand(groupJid, groupName, text, { m, meta, senderName, s
   }
 
   if (['/เรนเดอร์', '/render', '/renders'].includes(cmd)) {
-    return send(groupJid, tasks.formatClientRenders(groupJid, arg), { kind: 'renders' });
+    const today = db.rendersCountSince(groupJid, tasks.localDayStartTs());
+    const week = db.rendersCountSince(groupJid, now - 7 * 86400);
+    return send(
+      groupJid,
+      `🎨 *เรนเดอร์ภาพ*\nส่งสเก็ตพร้อมพิมพ์ "บอท เรนเดอร์ [สไตล์]" แล้วตอบกลับภาพที่ได้เพื่อสั่งปรับ\nใช้ไปแล้ว: วันนี้ ${today} ภาพ · 7 วัน ${week} ภาพ`,
+      { kind: 'renders' },
+    );
   }
 
   if (['/งาน', '/task'].includes(cmd)) return send(groupJid, tasks.formatTaskList(groupJid), { kind: 'list' });
@@ -1042,6 +1082,12 @@ async function catchUp() {
   }
 }
 
+const NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_SOCKET']);
+function isNetworkError(err) {
+  const code = err?.cause?.code || err?.code;
+  return NETWORK_CODES.has(code) || (err?.name === 'TypeError' && err?.message === 'terminated');
+}
+
 function main() {
   if (!hasCredentials()) {
     console.error(NO_KEY_MESSAGE);
@@ -1066,6 +1112,14 @@ function main() {
   };
   process.on('exit', unlock);
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
+  // A dropped connection inside a media/API download stream used to surface as an unhandled
+  // 'error' event and kill the process, losing the message being handled (seen 2026-11-09).
+  // Survive network errors only; anything else still crashes so launchd restarts us clean.
+  process.on('uncaughtException', (err) => {
+    if (isNetworkError(err)) return log('เครือข่ายสะดุด (ทำงานต่อ):', err.cause?.code || err.code || err.message);
+    console.error(err);
+    process.exit(1);
+  });
   // Reminders: check every 30 seconds while connected.
   setInterval(() => {
     if (!sock?.user) return;
@@ -1109,5 +1163,6 @@ export const _test = {
     syncTimers.delete(groupJid);
   },
   flushRenders,
+  isNetworkError,
   groupCache,
 };

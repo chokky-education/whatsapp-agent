@@ -254,7 +254,7 @@ const ROUTES = [
   ['งาน / การเตือน / ทวงซ้ำ / สรุปเช้า / เวลา Bangkok', 'src/tasks.js'],
   ['แฟ้มข้อมูลลูกค้า (สูงสุด 10 ราย) / สเปกวัสดุ / สั่งแก้ VO / หน้างาน (/ลูกค้า, /ลบโน้ต)', 'src/tasks.js; src/db.js; src/bot.js'],
   ['ที่มาและประวัติการแก้โน้ต (/โน้ต, /ที่มา, /ประวัติโน้ต, /แก้โน้ต)', 'src/tasks.js; src/db.js; src/bot.js'],
-  ['เรนเดอร์ภาพสถาปัตยกรรม (Sunburst) / เวอร์ชันภาพ / คิวเรนเดอร์ (/เรนเดอร์)', 'src/tasks.js; src/ai.js; src/bot.js; src/db.js'],
+  ['เรนเดอร์ภาพจากสเก็ต / render sketch / แก้ภาพ (ตอบกลับภาพ) / คิวเรนเดอร์ / /เรนเดอร์', 'src/render.js, src/bot.js (handleRenderRequest, startRender, executeRenderJob), src/ai.js (renderImage)'],
   ['ถามบอท / ค้นประวัติ / ลิงก์ Drive / ลูกค้าขอแก้', 'src/tasks.js; src/db.js'],
   ['ลบข้อมูลกลุ่ม / ยืนยันแอดมิน / กันประวัติกลับมา', 'src/bot.js; src/db.js'],
   ['แนะนำตัวบอท / ข้อจำกัด', 'src/about.js'],

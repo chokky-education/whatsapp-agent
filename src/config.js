@@ -28,7 +28,8 @@ export const config = {
   // Image generation/editing model (OpenAI GPT Image 2.6 Sunburst), separate from chat model.
   openaiImageModel: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-sunburst',
   imageQuality: process.env.IMAGE_QUALITY || 'medium',
-  maxRendersPerDay: Number(process.env.MAX_RENDERS_PER_DAY ?? 10),
+  // 0 = no daily limit (renders are still counted; see /เรนเดอร์).
+  maxRendersPerDay: Number(process.env.MAX_RENDERS_PER_DAY ?? 0),
 
   // Group names to watch (comma separated). Empty = every group the bot is in.
   watchGroups: list(process.env.WATCH_GROUPS),

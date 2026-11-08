@@ -15,15 +15,20 @@ Working:
   - Revisions table `client_note_revisions` preserves all previous versions; `client_note_sources` captures originating chat message IDs; `client_note_tombstones` prevents deleted/superseded notes from being recreated by auto-sync.
   - Commands: `/โน้ต <id>`, `/ที่มา <id>`, `/ประวัติโน้ต <id>`, `/แก้โน้ต <id> <ข้อความใหม่>` (or "บอท แก้โน้ต #N<id> เป็น..."), and `/ลบโน้ต <id>`.
   - Q&A context marks the current revision and clearly states what it superseded so outdated chat statements do not override the latest client specifications.
-- Phase 2 (Sunburst Render & Versioning):
-  - Verified live OpenAI API account access to `gpt-image-2.6-sunburst` (both `images.generate` and `images.edit` with real images verified).
-  - Bugfix: `saveIncomingMedia` downloads and records media immediately before `handleRequest` so when an image is sent with a caption (e.g. "บอท เรนเดอร์..."), `sourceMediaPath` is captured and sent to OpenAI `images.edit`. Added recent image fallback (within 30 mins) if user says "จากภาพ/สเก็ต" without quoting. Added guard to refuse text-to-image when user asks to render from an image but none is found.
-  - `client_renders` table records `version_no`, `parent_version`, `prompt`, `spec_snapshot`, `source_media_path`, `output_media_path`, and `bot_messages` tracks `render_id`.
-  - `src/ai.js` provides `renderImage({ prompt, sourceImage, quality, size })` supporting `openai.images.edit` (with `toFile` for reference/edits) and `openai.images.generate`.
-  - Architectural render command: Reply to SketchUp/site photo in group or send photo with caption "บอท เรนเดอร์<ชื่อบ้าน>จากภาพนี้...", automatically injects active client spec snapshot and sends image back to WhatsApp with version `v1` and architectural disclaimer.
-  - Version editing: "บอท แก้ภาพ<ชื่อบ้าน> เวอร์ชัน 1 ให้...", automatically feeds previous render image as source to produce `v2` (แก้ต่อจาก v1).
-  - Version history command: `/เรนเดอร์ <ชื่อบ้าน>` displays all versions, prompts, specs used, and daily quota.
-  - Queue isolation & Quota: dedicated render queue (`enqueueRender`, `pumpRenders`, `flushRenders`) so slow 10-30s image generation never blocks chat serialization or reminders. Enforces `MAX_RENDERS_PER_DAY=10` spending ceiling.
+- Renders (redesigned 2026-11-09 after the first live use failed; `src/render.js` + routing in `src/bot.js`):
+  - Routed by code, not by the chat AI: "บอท เรนเดอร์ [สไตล์]" with an attached/quoted sketch, or the sender's
+    latest image from the last 30 min; with no image the bot asks once and starts when that person sends one (10 min).
+    Replying to a rendered image = edit that render (`parent_id`, `version_no` = edit depth).
+  - Not tied to clients (`client_renders.client_id` now nullable; old rows kept, ids preserved by a one-time rebuild).
+  - Prompt (English rules + user's words only): keep furniture, positions, sizes, proportions, camera, walls and openings;
+    free materials/light/decor; no text/signage. Never text-to-image (always `images.edit`), `input_fidelity: high`
+    (falls back if the model rejects it).
+  - Output size = source size: `render.prepareSource` pads the source (grey) onto the closest model canvas
+    (1536x1024 / 1024x1536 / 1024x1024), `render.fitToSource` crops that box back and resizes to the source pixels.
+    Uses `sharp` (now a direct dependency; it was already installed via Baileys).
+  - `MAX_RENDERS_PER_DAY` defaults to 0 = unlimited (user wants to watch usage first); `/เรนเดอร์` shows today/7-day counts.
+  - Root causes of the bad first renders: no source image reached the model (text-to-image fallback) and the prompt
+    carried client name + stage label "บรีฟ / สำรวจ" + dossier spec, so the model invented a building.
 - Phase 2 Search & Deletion: Q&A adds bounded keyword search (40 newest matching messages) over this group’s stored history, including media descriptions; asks AI for sender/date evidence. /ลบข้อมูล (also "บอท ลบข้อมูลทั้งหมด") uses fresh group admin checks + same-sender 5-minute challenge; removes group chat, summaries, tasks, reminders, client data/renders and group media, retains a cutoff to prevent old history restoring it.
 - Client Dossiers (`clients` + `client_notes` + `tasks.client_id`, max `config.maxClients` = 10 active clients per group): upstream-to-downstream stages (`brief|design|boq|construction|handover`) and 5 note categories (`brief|spec|change|site|link`), with Controlled Hybrid capture, `/ลูกค้า`, `/ลูกค้า <ชื่อ>`, and `/ลบโน้ต <id>`.
 - Tasks and reminders (Phase 1, `src/tasks.js`): auto task capture after 3 min of quiet, "บอท …" requests,
@@ -33,13 +38,14 @@ Working:
 - Both AI providers (`AI_PROVIDER=openai|claude`).
 - Agent index (`scripts/index.mjs`, `AGENTS.md`, `INDEX.md`, this file).
 
-Tests (`npm test`, 54 passing on 2026-11-09): `test/export-parser.test.js`, `test/tasks.test.js`, `test/bot.test.js`.
+Tests (`npm test`, 62 passing on 2026-11-09): `test/export-parser.test.js`, `test/tasks.test.js`, `test/bot.test.js`.
 
 Git: `main`, remote `origin` = https://github.com/chokky-education/whatsapp-agent (**public**). Use fake data only (see AGENTS.md).
 
 ## In progress
 
-- (nothing in progress; Phase 1 and Phase 2 complete and verified)
+- Render redesign committed and fast-forwarded into `main` (not pushed). The live bot still runs the old code until an
+  authorized restart; on restart `client_renders` is rebuilt once (rows and ids kept).
 
 ## Next steps / ideas
 
@@ -48,6 +54,14 @@ Git: `main`, remote `origin` = https://github.com/chokky-education/whatsapp-agen
 - Review and refine live evaluation on real architectural queries once user tests Sunburst image rendering in practice.
 
 ## Known issues / watch out
+
+- Real-model check 2026-11-09 (one run on a team bedroom SketchUp view, outside WhatsApp, 64 s, 1536x1024):
+  every modelled item kept in place (TV wall, side shelves, 6-drawer console, slat wall, round mirror, vanity, stool,
+  cabinet, plant, door, window); `input_fidelity: high` accepted. Second run with pad-and-crop: output 1255x523 = the
+  sketch, items at the same pixel positions. Only this one sketch tested; exterior sketches and PDFs (not accepted) untested.
+- A crash on a dropped network stream ("TypeError: terminated", ECONNRESET/ETIMEDOUT) killed the bot twice on
+  2026-11-09; a message being handled at that moment is lost (it is already saved, so the redelivery is skipped as not new).
+  `main()` now logs and survives network-only uncaught exceptions; other errors still exit for launchd to restart.
 
 - The bot tells people its own limits (`src/about.js`: `/แนะนำ` text and the facts the AI answers from; mirrored in
   README "ข้อจำกัดของบอทที่รู้อยู่"). When a limit is fixed or a new one appears, update all three or the bot will
@@ -64,6 +78,7 @@ Git: `main`, remote `origin` = https://github.com/chokky-education/whatsapp-agen
 
 ## Log
 
+- 2026-11-09 — Redesigned renders after the user found them unusable (output ignored the sketch and invented a building): code-routed "บอท เรนเดอร์", reply-to-edit, ask-then-wait for sketch, no client binding, layout-preserving prompt without dossier data, output cropped back to the sketch's exact size (sharp pad->render->crop), input_fidelity high, no daily cap by default, /เรนเดอร์ usage counts, network-crash guard. New src/render.js; client_renders migration; removed render_client_image AI action and dossier render section. 62 tests pass. Not live. One real-model check afterwards kept the layout (see Known issues).
 - 2026-11-09 — Fixed image rendering source capture & restarted launchd (PID 72449): resolved race condition where incoming image caption messages triggered `handleRequest` before background `describeLater` downloaded the media (causing `sourceMediaPath` to be null and falling back to text-to-image). Added `saveIncomingMedia` for immediate synchronous media download on incoming image messages, recent group image fallback (within 30 mins) if user says "จากภาพ/สเก็ต" without quoting, and explicit guard against text-to-image when image is missing. Added prompt steering so Sunburst strictly preserves building layout. All 54 tests pass (`npm test`).
 - 2026-11-09 — User authorized live restart. Restarted launchd service (`com.whatsapp-group-summarizer.bot`, new PID 69796); verified old process exited, single instance running, and clean WhatsApp connection without QR. Phase 1 & 2 live in production.
 - 2026-11-09 — Implemented Phase 1 (Memory Provenance & Revisions) and Phase 2 (Sunburst Render & Versioning): verified live OpenAI API access to `gpt-image-2.6-sunburst`; added `client_note_revisions`, `client_note_sources`, `client_note_tombstones`, `/โน้ต`, `/ที่มา`, `/ประวัติโน้ต`, `/แก้โน้ต`, and correction-aware Q&A context; added `client_renders` table, `renderImage` in `src/ai.js`, `render_client_image` action in `src/tasks.js` with client spec snapshot and parent version linkage, `/เรนเดอร์` command, background render worker queue (`enqueueRender`, `pumpRenders`, `flushRenders`) isolated from chat serialization, `sendImage` with WhatsApp image sending & architectural disclaimer, and daily quota cap (`MAX_RENDERS_PER_DAY=10`). Updated `src/about.js`, `README.md`, `.env.example`, `INDEX.md`, and second-brain. All 53 tests passing (`npm test`).

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-tasks-test-'));
 process.env.DB_PATH = path.join(tmp, 'test.db');
@@ -151,48 +153,63 @@ test('Phase 1: note provenance sources, revisions, expectedRevision conflict, an
   assert.equal(db.hasClientNoteDedupe(G, cId, 'กระเบื้องสีเทาด้าน'), false);
 });
 
-test('Phase 2: client_renders version numbering, parent version tracking, daily quota count, and group deletion', () => {
+test('renders: standalone (no client), edit depth via parent, usage count, group deletion', () => {
   const G = '120363000000000201@g.us';
-  const cId = db.addClient({ groupJid: G, name: 'บ้านตัวอย่างเรนเดอร์', stage: 'design' });
-
-  const r1 = db.addClientRender({
+  const r1 = db.addRender({
     groupJid: G,
-    clientId: cId,
-    sourceMsgId: 'SKETCHUP_MSG_1',
-    sourceMediaPath: '/tmp/sketchup1.png',
-    outputMediaPath: '/tmp/render_v1.png',
-    prompt: 'เรนเดอร์บ้านตัวอย่าง ผนังขาว หลังคาเทา แสงช่วงเย็น',
-    specSnapshot: 'ผนังขาว, หลังคาเทา, กระเบื้องยางลายไม้สีโอ๊ค',
+    sourceMsgId: 'SKETCH_MSG_1',
+    sourceMediaPath: '/tmp/sketch1.png',
+    outputMediaPath: '/tmp/render_a.png',
+    prompt: 'warm neutral',
     model: 'gpt-image-2.6-sunburst',
     createdBy: 'Nok',
   });
-  assert.equal(r1.versionNo, 1);
-
-  const r2 = db.addClientRender({
+  const r2 = db.addRender({
     groupJid: G,
-    clientId: cId,
-    parentVersion: 1,
-    sourceMediaPath: '/tmp/render_v1.png',
-    outputMediaPath: '/tmp/render_v2.png',
-    prompt: 'แก้ภาพเวอร์ชัน 1 ให้ผนังเป็นสีครีม',
-    specSnapshot: 'ผนังขาว, หลังคาเทา, กระเบื้องยางลายไม้สีโอ๊ค',
+    parentId: r1,
+    sourceMediaPath: '/tmp/render_a.png',
+    outputMediaPath: '/tmp/render_b.png',
+    prompt: 'ไฟอุ่นขึ้น',
     model: 'gpt-image-2.6-sunburst',
     createdBy: 'Somchai',
   });
-  assert.equal(r2.versionNo, 2);
-
-  const list = db.clientRenders(cId, G);
-  assert.equal(list.length, 2);
-  assert.equal(list[0].version_no, 1);
-  assert.equal(list[1].version_no, 2);
-  assert.equal(list[1].parent_version, 1);
-
-  assert.equal(db.getClientRenderByVersion(cId, 1, G).output_media_path, '/tmp/render_v1.png');
-  assert.equal(db.getClientRenderByVersion(cId, 2, G).output_media_path, '/tmp/render_v2.png');
+  assert.equal(db.getRender(r1).client_id, null);
+  assert.equal(db.getRender(r1).version_no, 1);
+  assert.equal(db.getRender(r2).version_no, 2);
+  assert.equal(db.getRender(r2).parent_id, r1);
   assert.equal(db.rendersCountSince(G, Math.floor(Date.now() / 1000) - 60), 2);
 
   db.deleteGroupData(G, Math.floor(Date.now() / 1000));
-  assert.equal(db.clientRenders(cId, G).length, 0);
+  assert.equal(db.getRender(r1), null);
+  assert.equal(db.rendersCountSince(G, 0), 0);
+});
+
+test('renders: an old database where renders required a client migrates and keeps rows and ids', () => {
+  const file = path.join(tmp, 'old-renders.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE client_renders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, group_jid TEXT NOT NULL, client_id INTEGER NOT NULL,
+    version_no INTEGER NOT NULL, parent_version INTEGER, source_msg_id TEXT, source_media_path TEXT,
+    output_media_path TEXT, prompt TEXT NOT NULL, spec_snapshot TEXT, model TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done', created_by TEXT, created_at INTEGER NOT NULL);
+    INSERT INTO client_renders (id, group_jid, client_id, version_no, prompt, model, created_at)
+      VALUES (7, '120363000000000202@g.us', 3, 1, 'old render', 'm', 1);`);
+  old.close();
+  const out = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', `const db = await import(${JSON.stringify(path.resolve('src/db.js'))});
+      const id = db.addRender({ groupJid: '120363000000000202@g.us', parentId: 7, outputMediaPath: '/tmp/x.png', prompt: 'new', model: 'm' });
+      console.log(JSON.stringify({ old: db.getRender(7), id, row: db.getRender(id) }));`],
+    { env: { ...process.env, DB_PATH: file }, encoding: 'utf8' },
+  );
+  assert.equal(out.status, 0, out.stderr);
+  const r = JSON.parse(out.stdout.trim().split('\n').pop());
+  assert.equal(r.old.prompt, 'old render');
+  assert.equal(r.old.client_id, 3);
+  assert.equal(r.id, 8, 'ids continue after the old rows');
+  assert.equal(r.row.client_id, null);
+  assert.equal(r.row.parent_id, 7);
+  assert.equal(r.row.version_no, 2);
 });
 
 

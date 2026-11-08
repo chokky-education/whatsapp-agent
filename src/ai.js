@@ -180,14 +180,14 @@ export async function renderImage({ prompt, sourceImage = null, quality = config
     const file = await toFile(sourceImage.buffer, sourceImage.name || 'source.png', {
       type: sourceImage.mime || 'image/png',
     });
-    response = await openai.images.edit({
-      model,
-      image: file,
-      prompt,
-      quality,
-      size,
-      output_format: 'png',
-    });
+    const params = { model, image: file, prompt, quality, size, output_format: 'png' };
+    try {
+      // input_fidelity=high keeps the source's shapes and layout; not every image model accepts it.
+      response = await openai.images.edit({ ...params, input_fidelity: 'high' });
+    } catch (err) {
+      if (!(err?.status === 400 && /input_fidelity/i.test(err?.message || ''))) throw err;
+      response = await openai.images.edit(params);
+    }
   } else {
     response = await openai.images.generate({
       model,

@@ -260,9 +260,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS client_renders (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     group_jid         TEXT NOT NULL,
-    client_id         INTEGER NOT NULL,
+    client_id         INTEGER,
     version_no        INTEGER NOT NULL,
     parent_version    INTEGER,
+    parent_id         INTEGER,
     source_msg_id     TEXT,
     source_media_path TEXT,
     output_media_path TEXT,
@@ -273,9 +274,41 @@ db.exec(`
     created_by        TEXT,
     created_at        INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_client_renders_client ON client_renders (client_id, version_no);
   CREATE INDEX IF NOT EXISTS idx_client_renders_group_ts ON client_renders (group_jid, created_at);
 `);
+
+// Renders used to require a client; they are now standalone (client_id optional, parent_id = the
+// render that was edited). Rebuild once, keeping ids so old bot_messages.render_id links still work.
+if (db.prepare('PRAGMA table_info(client_renders)').all().some((c) => c.name === 'client_id' && c.notnull)) {
+  db.exec(`
+    BEGIN;
+    CREATE TABLE client_renders_new (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_jid         TEXT NOT NULL,
+      client_id         INTEGER,
+      version_no        INTEGER NOT NULL,
+      parent_version    INTEGER,
+      parent_id         INTEGER,
+      source_msg_id     TEXT,
+      source_media_path TEXT,
+      output_media_path TEXT,
+      prompt            TEXT NOT NULL,
+      spec_snapshot     TEXT,
+      model             TEXT NOT NULL,
+      status            TEXT NOT NULL DEFAULT 'done',
+      created_by        TEXT,
+      created_at        INTEGER NOT NULL
+    );
+    INSERT INTO client_renders_new
+      (id, group_jid, client_id, version_no, parent_version, source_msg_id, source_media_path, output_media_path, prompt, spec_snapshot, model, status, created_by, created_at)
+      SELECT id, group_jid, client_id, version_no, parent_version, source_msg_id, source_media_path, output_media_path, prompt, spec_snapshot, model, status, created_by, created_at
+      FROM client_renders;
+    DROP TABLE client_renders;
+    ALTER TABLE client_renders_new RENAME TO client_renders;
+    CREATE INDEX IF NOT EXISTS idx_client_renders_group_ts ON client_renders (group_jid, created_at);
+    COMMIT;
+  `);
+}
 
 if (!db.prepare('PRAGMA table_info(bot_messages)').all().some((c) => c.name === 'render_id')) {
   db.exec('ALTER TABLE bot_messages ADD COLUMN render_id INTEGER');
@@ -586,54 +619,36 @@ export function deleteClientNote(id, groupJid = null) {
   return r.changes > 0;
 }
 
-export function addClientRender(r) {
-  const ts = now();
-  const maxV = db.prepare('SELECT MAX(version_no) AS v FROM client_renders WHERE client_id = ?').get(r.clientId)?.v ?? 0;
-  const versionNo = maxV + 1;
+/**
+ * Record a finished render. Renders are not tied to a client. `version_no` is the edit depth
+ * (1 = rendered from a sketch, 2 = first edit of that render, ...).
+ */
+export function addRender(r) {
+  const parent = r.parentId ? getRender(r.parentId) : null;
   const res = db
     .prepare(
       `INSERT INTO client_renders
-        (group_jid, client_id, version_no, parent_version, source_msg_id, source_media_path, output_media_path, prompt, spec_snapshot, model, status, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (group_jid, client_id, version_no, parent_id, source_msg_id, source_media_path, output_media_path, prompt, model, status, created_by, created_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 'done', ?, ?)`,
     )
     .run(
       r.groupJid,
-      r.clientId,
-      versionNo,
-      r.parentVersion ?? null,
+      (parent?.version_no ?? 0) + 1,
+      parent?.id ?? null,
       r.sourceMsgId ?? null,
       r.sourceMediaPath ?? null,
       r.outputMediaPath ?? null,
       String(r.prompt || '').trim(),
-      r.specSnapshot ?? null,
-      r.model || 'gpt-image-2.6-sunburst',
-      r.status ?? 'done',
+      r.model || 'unknown',
       r.createdBy ?? null,
-      ts,
+      now(),
     );
-  db.prepare('UPDATE clients SET updated_at = ? WHERE id = ?').run(ts, r.clientId);
-  return { id: Number(res.lastInsertRowid), versionNo };
+  return Number(res.lastInsertRowid);
 }
 
-export function getClientRender(id) {
+export function getRender(id) {
   if (!id) return null;
   return db.prepare('SELECT * FROM client_renders WHERE id = ?').get(id) ?? null;
-}
-
-export function clientRenders(clientId, groupJid = null) {
-  if (groupJid) {
-    return db
-      .prepare('SELECT * FROM client_renders WHERE client_id = ? AND group_jid = ? ORDER BY version_no ASC, id ASC')
-      .all(clientId, groupJid);
-  }
-  return db.prepare('SELECT * FROM client_renders WHERE client_id = ? ORDER BY version_no ASC, id ASC').all(clientId);
-}
-
-export function getClientRenderByVersion(clientId, versionNo = null, groupJid = null) {
-  const list = clientRenders(clientId, groupJid);
-  if (!list.length) return null;
-  if (versionNo == null) return list[list.length - 1];
-  return list.find((r) => r.version_no === Number(versionNo)) ?? null;
 }
 
 export function rendersCountSince(groupJid, sinceTs) {
