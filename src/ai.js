@@ -1,7 +1,8 @@
 // One place that talks to the AI. AI_PROVIDER picks Claude (Anthropic) or OpenAI.
 import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import { config } from './config.js';
+import { telemetry } from './telemetry.js';
 
 let anthropic;
 let openai;
@@ -28,12 +29,14 @@ export const NO_KEY_MESSAGE =
  */
 export async function ask(p) {
   if (_stub.ask) return _stub.ask(p);
-  return config.provider === 'openai' ? askOpenAI(p) : askClaude(p);
+  const provider = config.provider === 'openai' ? 'openai' : 'anthropic';
+  return telemetry.ai(p.capability || (p.file ? 'media' : 'summary'), provider, provider === 'openai' ? config.openaiModel : config.claudeModel, reportModel =>
+    provider === 'openai' ? askOpenAI({ ...p, reportModel }) : askClaude({ ...p, reportModel }));
 }
 
 const TRUNCATED = '\n\n(สรุปถูกตัดเพราะยาวเกินกำหนด)';
 
-async function askClaude({ system, text, file, effort = 'medium', maxTokens = 16000 }) {
+async function askClaude({ system, text, file, effort = 'medium', maxTokens = 16000, reportModel = () => {} }) {
   anthropic ??= new Anthropic();
   const content = [];
   if (file?.mime === 'application/pdf') {
@@ -54,6 +57,7 @@ async function askClaude({ system, text, file, effort = 'medium', maxTokens = 16
     messages: [{ role: 'user', content }],
   });
 
+  reportModel(response.model);
   if (response.stop_reason === 'refusal') {
     const why = response.stop_details?.explanation || response.stop_details?.category || 'unknown';
     throw new Error(`AI ปฏิเสธคำขอ (${why})`);
@@ -66,7 +70,7 @@ async function askClaude({ system, text, file, effort = 'medium', maxTokens = 16
   return response.stop_reason === 'max_tokens' ? out + TRUNCATED : out;
 }
 
-async function askOpenAI({ system, text, file, effort = 'medium', maxTokens = 16000 }) {
+async function askOpenAI({ system, text, file, effort = 'medium', maxTokens = 16000, reportModel = () => {} }) {
   openai ??= new OpenAI();
   const content = [];
   if (file?.mime === 'application/pdf') {
@@ -89,6 +93,7 @@ async function askOpenAI({ system, text, file, effort = 'medium', maxTokens = 16
     store: false,
   });
 
+  reportModel(response.model);
   const out = (response.output_text || '').trim();
   if (response.status === 'incomplete') {
     if (response.incomplete_details?.reason === 'content_filter') throw new Error('AI ปฏิเสธคำขอ (content_filter)');
@@ -116,7 +121,13 @@ export function explainError(err) {
  * The schema must list every property in `required` and set additionalProperties: false.
  * @returns {Promise<any>}
  */
-export async function askJSON({ system, text, schema, name = 'result', effort = 'low', maxTokens = 8000 }) {
+export async function askJSON(p) {
+  if (_stub.askJSON) return _stub.askJSON(p);
+  const provider = config.provider === 'openai' ? 'openai' : 'anthropic';
+  return telemetry.ai(p.capability || 'requests', provider, provider === 'openai' ? config.openaiModel : config.claudeModel, reportModel => askJSONRequest({ ...p, reportModel }));
+}
+
+async function askJSONRequest({ system, text, schema, name = 'result', effort = 'low', maxTokens = 8000, reportModel }) {
   if (_stub.askJSON) return _stub.askJSON({ system, text, schema, name });
   let raw;
   if (config.provider === 'openai') {
@@ -130,6 +141,7 @@ export async function askJSON({ system, text, schema, name = 'result', effort = 
       store: false,
       text: { format: { type: 'json_schema', name, schema, strict: true } },
     });
+    reportModel(response.model);
     if (response.status === 'incomplete') throw new Error(`AI ตอบไม่ครบ (${response.incomplete_details?.reason})`);
     raw = response.output_text;
   } else {
@@ -143,6 +155,7 @@ export async function askJSON({ system, text, schema, name = 'result', effort = 
       system,
       messages: [{ role: 'user', content: text }],
     });
+    reportModel(response.model);
     if (response.stop_reason === 'refusal') throw new Error('AI ปฏิเสธคำขอ');
     if (response.stop_reason === 'max_tokens') throw new Error('AI ตอบไม่ครบ (max_tokens)');
     raw = response.content
@@ -157,5 +170,60 @@ export async function askJSON({ system, text, schema, name = 'result', effort = 
   }
 }
 
+/**
+ * Generate or edit an architectural render image using config.openaiImageModel (gpt-image-2.6-sunburst).
+ * Separate from the chat model so chat can use either OpenAI or Claude.
+ * @param {{
+ *   prompt: string,
+ *   sourceImage?: { buffer: Buffer, mime?: string, name?: string } | null,
+ *   quality?: 'low' | 'medium' | 'high' | 'auto',
+ *   size?: '1024x1024' | '1536x1024' | '1024x1536' | 'auto',
+ * }} p
+ * @returns {Promise<{ buffer: Buffer, mime: string, model: string }>}
+ */
+export async function renderImage(p) {
+  if (_stub.renderImage) return _stub.renderImage(p);
+  return telemetry.ai('render', 'openai', config.openaiImageModel, reportModel => renderImageRequest({ ...p, reportModel }));
+}
+
+async function renderImageRequest({ prompt, sourceImage = null, quality = config.imageQuality, size = 'auto', reportModel }) {
+  if (_stub.renderImage) return _stub.renderImage({ prompt, sourceImage, quality, size });
+  if (!process.env.OPENAI_API_KEY) {
+    throw Object.assign(new Error('ไม่พบ OPENAI_API_KEY สำหรับสร้างภาพด้วย ' + config.openaiImageModel), { status: 401 });
+  }
+  openai ??= new OpenAI();
+  const model = config.openaiImageModel;
+  let response;
+  if (sourceImage?.buffer) {
+    const file = await toFile(sourceImage.buffer, sourceImage.name || 'source.png', {
+      type: sourceImage.mime || 'image/png',
+    });
+    const params = { model, image: file, prompt, quality, size, output_format: 'png' };
+    try {
+      // input_fidelity=high keeps the source's shapes and layout; not every image model accepts it.
+      response = await openai.images.edit({ ...params, input_fidelity: 'high' });
+    } catch (err) {
+      if (!(err?.status === 400 && /input_fidelity/i.test(err?.message || ''))) throw err;
+      response = await openai.images.edit(params);
+    }
+  } else {
+    response = await openai.images.generate({
+      model,
+      prompt,
+      quality,
+      size,
+      output_format: 'png',
+    });
+  }
+  reportModel(response.model);
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) throw new Error('AI ไม่ได้ส่งข้อมูลภาพกลับมา');
+  return {
+    buffer: Buffer.from(b64, 'base64'),
+    mime: 'image/png',
+    model,
+  };
+}
+
 /** Tests replace the AI with canned answers here. */
-export const _stub = { ask: null, askJSON: null };
+export const _stub = { ask: null, askJSON: null, renderImage: null };

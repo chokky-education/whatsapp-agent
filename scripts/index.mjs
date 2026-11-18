@@ -22,9 +22,9 @@ const STORE = join(ROOT, '.local-index');
 const APP_DB = join(ROOT, 'data', 'messages.db');
 const VERSION = '2'; // bump when chunking/summary logic changes, to force a full rebuild
 
-const EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.json', '.md', '.sh', '.yml', '.yaml', '.mdc']);
-const IGNORED_DIRS = new Set(['node_modules', '.git', '.local-index', 'data', 'output', 'coverage', 'dist']);
-const IGNORED_FILES = new Set(['INDEX.md', 'package-lock.json']);
+const EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.json', '.md', '.sh', '.yml', '.yaml', '.mdc', '.sql', '.html', '.css']);
+const IGNORED_DIRS = new Set(['node_modules', '.git', '.local-index', 'data', 'output', 'coverage', 'dist', 'eval', 'logs', 'worktrees', '.worktrees', '.playwright-cli', '.wrangler', '.cf']);
+const IGNORED_FILES = new Set(['INDEX.md', 'package-lock.json', '.deployment.local.json', '.dev.vars']);
 const MAX_FILE_BYTES = 512 * 1024;
 const CHUNK_CHARS = 2000;
 const CHUNK_LINES = 40;
@@ -209,6 +209,7 @@ function walk(dir) {
     }
     if (!entry.isFile() || IGNORED_FILES.has(entry.name) || !EXTENSIONS.has(extname(entry.name))) continue;
     const rel = relative(ROOT, full).replaceAll('\\', '/');
+    if (/^docs\/warroom-conversation-handoff-.*\.md$/.test(rel)) continue;
     const st = statSync(full);
     if (st.size > MAX_FILE_BYTES) continue;
     const key = `file:${rel}`;
@@ -246,17 +247,41 @@ function refreshSchema() {
 
 // Hand-written task → file routing. Edit this table, then run `refresh`; never edit INDEX.md directly.
 const ROUTES = [
+  ['Warroom งานทีมจริง / สิทธิ์กลุ่มทดลอง / SQLite / ซิงก์ / ปิดงาน / หมดอายุ', 'src/work-bridge.js; src/db.js; warroom/src/work.js; warroom/src/work-protocol.js; warroom/migrations/0002-work.sql; warroom/public/work-view.js; warroom/README.md'],
+  ['Warroom ต้นแบบงานทีม / งานของฉัน / งานในกลุ่ม / ตาราง / กระดาน', 'docs/prototypes/warroom-work.html; docs/prototypes/warroom-work.css; docs/prototypes/warroom-work.js; docs/prototypes/serve-warroom.mjs; docs/adr/0001-one-task-list-for-warroom-and-whatsapp.md'],
+  ['Warroom Horizon Bento + Cozy Café / Figma layout / บอทสุขภาพ', 'docs/prototypes/warroom-horizon.html; docs/prototypes/warroom-horizon.css; docs/prototypes/warroom-horizon.js; docs/superpowers/specs/2026-11-16-warroom-horizon-cozy-design.md; docs/superpowers/plans/2026-11-16-warroom-horizon-cozy.md; docs/superpowers/plans/2026-11-16-warroom-production-horizon.md'],
+  ['Warroom Cozy Café / design tokens / animated graphs', 'docs/prototypes/warroom-cozy.html; docs/prototypes/warroom-cozy.css; docs/prototypes/warroom-cozy.js; docs/superpowers/specs/2026-11-16-warroom-cozy-design.md; docs/superpowers/plans/2026-11-16-warroom-cozy-prototype.md'],
+  ['Warroom exploration / Bevel reference / rejected layouts', 'docs/warroom-design-exploration.md; docs/prototypes/warroom-health.html; docs/prototypes/assets/FLATICON-LICENSE.txt'],
+  ['Warroom UI redesign / warm companion / ต้นแบบอบอุ่น', 'docs/prototypes/warroom-ops.html; docs/prototypes/warroom-ops.js; docs/prototypes/warroom-ops.css; docs/prototypes/warroom-warm.html; docs/prototypes/serve-warroom.mjs; docs/warroom-ui-redesign.md'],
+  ['Warroom เว็บไซต์สถานะ / Google login / สมาชิกและสิทธิ์ / admin pause', 'warroom/src/worker.js; warroom/src/auth.js; warroom/public/index.html; warroom/public/style.css; warroom/public/app.js; warroom/public/view-model.js; warroom/test/ui-model.test.js; warroom/test/ui-csp.test.js'],
+  ['Warroom heartbeat / provider model / telemetry privacy / reconnect', 'src/telemetry.js; warroom/src/protocol.js; src/ai.js; src/bot.js'],
+  ['Warroom แจ้งเตือน / incident / email / retention / ทดสอบ', 'warroom/src/monitor.js; warroom/migrations/0001.sql; warroom/test/warroom.test.js'],
+  ['Warroom ติดตั้งออนไลน์ / deployment / local preview / setup Google', 'warroom/README.md; warroom/deploy.mjs; warroom/dev.mjs; warroom/build.mjs; DESIGN.md; PRODUCT.md'],
   ['เชื่อม WhatsApp / รับข้อความ / คำสั่งในกลุ่ม (/สรุป, /งาน…) / ตั้งเวลา cron', 'src/bot.js'],
+  ['ล็อกอิน WhatsApp / ป้องกันไฟล์ auth เสีย / atomic auth state', 'src/auth-state.js; src/bot.js; test/auth-state.test.js'],
+  ['คิวงานค้าง / watchdog / serial queue recovery', 'src/serial-queue.js; src/bot.js; test/serial-queue.test.js'],
+  ['คำศัพท์ Warroom / สถานะบอท / สถานะงานทีม', 'GLOSSARY.md'],
+  ['แผน Warroom / เว็บไซต์สถานะบอท / แจ้งเตือนอีเมล / monitoring', 'docs/PLAN-warroom-status.md'],
   ['ค่าตั้งค่าจาก .env (ชื่อตัวแปร ค่าเริ่มต้น)', 'src/config.js; .env.example'],
-  ['เรียก AI (Claude / OpenAI), เลือก provider, JSON output', 'src/ai.js'],
+  ['เรียก AI (Claude / OpenAI), เลือก provider, JSON output, สร้างภาพ Sunburst', 'src/ai.js'],
   ['รูปแบบสรุป / prompt สรุป / transcript', 'src/summarize.js'],
+  ['รายงานประจำวัน / สรุปเย็น / งานที่เสร็จในแชต', 'src/summarize.js; src/bot.js; src/db.js; test/bot.test.js'],
   ['อธิบายรูปและ PDF', 'src/describe.js'],
   ['งาน / การเตือน / ทวงซ้ำ / สรุปเช้า / เวลา Bangkok', 'src/tasks.js'],
+  ['แฟ้มข้อมูลลูกค้า (สูงสุด 10 ราย) / สเปกวัสดุ / สั่งแก้ VO / หน้างาน (/ลูกค้า, /ลบโน้ต)', 'src/tasks.js; src/db.js; src/bot.js'],
+  ['ที่มาและประวัติการแก้โน้ต (/โน้ต, /ที่มา, /ประวัติโน้ต, /แก้โน้ต)', 'src/tasks.js; src/db.js; src/bot.js'],
+  ['เรนเดอร์ภาพจากสเก็ต / render sketch / แก้ภาพ (ตอบกลับภาพ) / คิวเรนเดอร์ / /เรนเดอร์', 'src/render.js, src/bot.js (handleRenderRequest, startRender, executeRenderJob), src/ai.js (renderImage)'],
+  ['ถามบอท / ค้นประวัติ / ลิงก์ Drive / ลูกค้าขอแก้', 'src/tasks.js; src/db.js'],
+  ['ลบข้อมูลกลุ่ม / ยืนยันแอดมิน / กันประวัติกลับมา', 'src/bot.js; src/db.js'],
+  ['แนะนำตัวบอท / ข้อจำกัด', 'src/about.js'],
+  ['เปิดบอทเบื้องหลัง macOS', 'scripts/autostart.sh'],
   ['ฐานข้อมูล SQLite (ตาราง + query)', 'src/db.js'],
   ['อ่านไฟล์ Export chat (.zip / _chat.txt)', 'src/export-parser.js; src/export-cli.js'],
   ['ตั้ง API key แบบไม่โชว์บนจอ', 'scripts/set-key.sh'],
   ['Tests', 'test/*.test.js (npm test)'],
   ['วิธีติดตั้ง / ใช้งาน / คำสั่งสำหรับผู้ใช้', 'README.md'],
+  ['วิจัยฟีเจอร์ Abdul / REA / คลังข้อมูล / semantic search / Calendar', 'docs/research/abdul-features-2026-11-08.md'],
+  ['แผนพัฒนา ความจำที่แก้ได้ / ที่มาโน้ต / ค้นจากความหมาย / เตือนล่วงหน้า / ระดับการทวง', 'docs/PLAN-memory-search-reminders.md'],
   ['สถานะงานล่าสุด / งานถัดไป / บันทึกส่งต่อ', 'HANDOFF.md'],
   ['กติกาสำหรับ AI agent', 'AGENTS.md'],
   ['ระบบ index นี้', 'scripts/index.mjs'],

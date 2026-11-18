@@ -18,6 +18,12 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(root, 'data', 'messages.db'),
   outputDir: path.join(root, 'output'),
 
+  // Optional external status reporting. Never include chat contents.
+  warroomUrl: process.env.WARROOM_URL || '',
+  warroomToken: process.env.WARROOM_INGEST_TOKEN || '',
+  workToken: process.env.WARROOM_WORK_TOKEN || '',
+  workPairingFile: process.env.WARROOM_WORK_CONFIG || path.join(root, 'data', 'warroom-work.local.json'),
+
   // AI provider: "openai" or "claude". Without AI_PROVIDER: Claude only if just an Anthropic key is set.
   provider: (
     process.env.AI_PROVIDER ||
@@ -25,6 +31,11 @@ export const config = {
   ).toLowerCase(),
   claudeModel: process.env.CLAUDE_MODEL || 'claude-opus-5-5',
   openaiModel: process.env.OPENAI_MODEL || 'gpt-6.1-terra',
+  // Image generation/editing model (OpenAI GPT Image 2.6 Sunburst), separate from chat model.
+  openaiImageModel: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-sunburst',
+  imageQuality: process.env.IMAGE_QUALITY || 'medium',
+  // 0 = no daily limit (renders are still counted; see /เรนเดอร์).
+  maxRendersPerDay: Number(process.env.MAX_RENDERS_PER_DAY ?? 0),
 
   // Group names to watch (comma separated). Empty = every group the bot is in.
   watchGroups: list(process.env.WATCH_GROUPS),
@@ -48,6 +59,20 @@ export const config = {
   // Follow-ups on a one-off task reminder while the task is still open.
   maxNags: Number(process.env.MAX_NAGS ?? 2),
   nagHours: Number(process.env.NAG_HOURS ?? 3),
+  // Recent chat context for answers; keyword retrieval adds up to 40 older matching messages.
+  qaContextMessages: 60,
+  qaContextDays: 7,
+  // Phase 1 client dossier limit per group.
+  maxClients: Number(process.env.MAX_CLIENTS ?? 10),
+
+  // After the bot was offline: answer commands/requests sent up to this many hours ago.
+  offlineReplyHours: Number(process.env.OFFLINE_REPLY_HOURS ?? 12),
+
+  // How the bot introduces itself, and who people contact about it.
+  botDisplayName: process.env.BOT_DISPLAY_NAME || 'BOTTY',
+  botAdmin: process.env.BOT_ADMIN || '',
+  // Answer questions about the bot (e.g. "ai นี้เก็บข้อมูลไหม") even when it isn't tagged.
+  answerBotQuestions: (process.env.ANSWER_BOT_QUESTIONS || 'true') !== 'false',
   // Words that call the bot besides @mentioning it (comma separated).
   botNames: list(process.env.BOT_NAMES || 'บอท,botty,bot'),
 

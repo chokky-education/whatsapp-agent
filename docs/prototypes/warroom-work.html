@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>งานทีม · Warroom</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/warroom-style.css">
+  <link rel="stylesheet" href="/work.css">
+  <link rel="stylesheet" href="/warroom-work.css">
+  <script type="module" src="/warroom-work.js"></script>
+</head>
+<body class="work-page">
+  <a class="skip" href="#work-main">ไปที่รายการงาน</a>
+  <div class="work-shell">
+    <aside class="work-sidebar">
+      <a class="work-brand" href="/horizon" aria-label="Souvannarath Architect · สถานะบอท">
+        <img class="work-logo work-logo-day" src="/assets/primary_logo_dark.svg" alt="" width="160" height="40">
+        <img class="work-logo work-logo-night" src="/assets/primary_logo_light.svg" alt="" width="160" height="40">
+      </a>
+      <nav class="work-nav" aria-label="เมนู Warroom">
+        <a href="/work" aria-current="page">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M9 5V3h6v2m-7 8 2 2 5-5"/></svg>งานทีม
+        </a>
+        <a href="/horizon">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l3-6 4 12 3-6h4"/></svg>สถานะบอท
+        </a>
+      </nav>
+      <div class="work-account">
+        <span class="work-avatar" aria-hidden="true">น</span>
+        <div><strong>นก</strong><small>กลุ่มสตูดิโอตัวอย่าง</small></div>
+      </div>
+    </aside>
+
+    <main class="work-main" id="work-main" tabindex="-1">
+      <div class="work-demo">
+        <span><strong>ต้นแบบ</strong><span class="work-demo-separator" aria-hidden="true"></span>ข้อมูลสมมติ</span>
+        <label class="work-scenario">
+          <span>ลองสถานการณ์</span>
+          <select id="work-scenario">
+            <option value="online">บอทออนไลน์</option>
+            <option value="offline">บอทออฟไลน์</option>
+            <option value="empty">ยังไม่มีงาน</option>
+            <option value="failure">บันทึกพลาดครั้งแรก</option>
+          </select>
+        </label>
+      </div>
+
+      <header class="work-header">
+        <div class="work-heading">
+          <h1 id="work-title">งานของฉัน</h1>
+          <p id="work-date"></p>
+        </div>
+        <p class="work-sync" id="work-sync"></p>
+      </header>
+
+      <div class="work-stats" aria-label="สรุปตามกำหนดส่ง">
+        <div class="work-stat" data-section="overdue"><span>เลยกำหนด</span><strong id="work-count-overdue">0</strong></div>
+        <div class="work-stat" data-section="today"><span>ครบกำหนดวันนี้</span><strong id="work-count-today">0</strong></div>
+        <div class="work-stat" data-section="done"><span>เสร็จวันนี้</span><strong id="work-count-done">0</strong></div>
+      </div>
+
+      <div class="work-offline" id="work-offline" role="status" hidden>
+        <strong>บอทออฟไลน์</strong>
+        <span>กำลังแสดงงานที่ซิงก์ไว้ ลองกดเสร็จอีกครั้งเมื่อบอทออนไลน์</span>
+      </div>
+
+      <section class="work-list" aria-labelledby="work-title">
+        <div class="work-toolbar">
+          <div class="work-scope" role="group" aria-label="เลือกชุดงาน">
+            <button type="button" data-scope="mine" aria-pressed="true">งานของฉัน</button>
+            <button type="button" data-scope="group" aria-pressed="false">งานในกลุ่ม</button>
+          </div>
+          <div class="work-tools">
+            <label class="work-filter">
+              <span>โครงการ</span>
+              <select id="work-project" aria-label="กรองโครงการ">
+                <option value="">ทุกโครงการ</option>
+              </select>
+            </label>
+            <div class="work-view" role="group" aria-label="มุมมองรายการงาน">
+              <button type="button" data-layout="table" aria-pressed="true">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16m-4-12v14"/></svg>ตาราง
+              </button>
+              <button type="button" data-layout="board" aria-pressed="false">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="15" rx="1"/><rect x="14" y="4" width="7" height="11" rx="1"/></svg>กระดาน
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="work-feedback" class="work-feedback" role="status"></div>
+        <div class="work-column-controls" id="work-column-controls" role="group" aria-label="เลือกคอลัมน์กระดาน" hidden></div>
+        <div id="work-content"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

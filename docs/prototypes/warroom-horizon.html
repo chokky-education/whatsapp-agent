@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <title>SOUVANNARATH ARCHITECT · Warroom Prototype</title>
+  <link rel="stylesheet" href="/warroom-horizon.css">
+  <script defer src="/warroom-horizon.js"></script>
+</head>
+<body>
+  <div class="demo">
+    <strong>แบบทดลอง SOUVANNARATH ARCHITECT · ข้อมูลสมมติทั้งหมด</strong>
+    <div class="demo-controls">
+      <label>
+        สถานการณ์
+        <select id="scenario">
+          <option value="problem">WhatsApp หลุด</option>
+          <option value="healthy">เชื่อมต่อได้</option>
+          <option value="stale">ข้อมูลเก่า</option>
+          <option value="empty">ยังไม่มีข้อมูล</option>
+          <option value="ai">AI สรุปมีปัญหา</option>
+        </select>
+      </label>
+      <label>
+        มุมมองสิทธิ์
+        <select id="role">
+          <option value="admin">ผู้ดูแล (Admin)</option>
+          <option value="member">ทีมงาน (Member)</option>
+        </select>
+      </label>
+      <label>
+        โทนสี
+        <select id="theme">
+          <option value="auto">ตามระบบ</option>
+          <option value="light">สว่าง (Bone &amp; Limestone)</option>
+          <option value="dark">มืด (Charcoal Dark)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="shell" id="horizon-shell">
+    <aside>
+      <div class="sidebar-header">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 340 340" aria-hidden="true">
+            <g transform="translate(21,30) scale(1.02)" fill="currentColor">
+              <path d="M 73 76 L 247 2 L 247 51 L 73 119 Z" />
+              <path d="M 73 76 L 80 73 L 80 190 L 73 193 Z" />
+              <path d="M 104 115 L 267 148 L 267 152 L 104 119 Z" />
+              <path d="M 22 209 L 267 144 L 267 194 L 22 263 Z" />
+            </g>
+          </svg>
+          <div class="brand-copy">
+            <div class="brand-word"><strong>SOUVANNARATH</strong> <span>ARCHITECT</span></div>
+            <small>WARROOM · สถานะบอทของทีม</small>
+          </div>
+        </div>
+        <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="horizon-nav"
+          aria-expanded="true" aria-label="ย่อแถบเมนู" title="ย่อแถบเมนู">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M9 5v14"/>
+            <path class="sidebar-chevron" d="m16 9-3 3 3 3"/>
+          </svg>
+        </button>
+      </div>
+
+      <nav id="horizon-nav" aria-label="เมนูหลักของ Warroom">
+        <a class="nav-btn nav-link" href="/work" aria-label="งานทีม" title="งานทีม">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M9 5V3h6v2m-7 8 2 2 5-5"/></svg>
+          <span class="nav-text">งานทีม<small>งานของฉันและงานในกลุ่ม</small></span>
+        </a>
+        <button type="button" class="nav-btn" data-view="overview" aria-current="page" aria-label="ภาพรวม" title="ภาพรวม">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+          <span class="nav-text">ภาพรวม<small>สถานะและกราฟวันนี้</small></span>
+        </button>
+        <button type="button" class="nav-btn" data-view="history" aria-label="ประวัติ" title="ประวัติ">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19h16M7 15V9m5 6V5m5 10v-4"/></svg>
+          <span class="nav-text">ประวัติ<small>เหตุการณ์ย้อนหลัง 30 วัน</small></span>
+        </button>
+        <button type="button" class="nav-btn" data-view="settings" aria-label="การแจ้งเตือน" title="การแจ้งเตือน">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0a3 3 0 1 1-6 0"/></svg>
+          <span class="nav-text">การแจ้งเตือน<small id="nav-settings-sub">พักเตือนและสถานะอีเมล</small></span>
+        </button>
+        <button type="button" class="nav-btn" data-view="members" aria-label="สมาชิก" title="สมาชิก">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span class="nav-text">สมาชิก<small id="nav-members-sub">บัญชีทีมและผู้ดูแล</small></span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <strong id="account-label">Nok · ผู้ดูแล</strong>
+        <span>บัญชีตัวอย่าง · 16 พ.ย. เวลา Bangkok</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="header-bar">
+        <div>
+          <div class="breadcrumb" id="breadcrumb">Warroom / ภาพรวม</div>
+          <div class="header-title-row">
+            <h1 id="page-title">สุขภาพบอทวันนี้</h1>
+            <span class="live-pill">
+              <span class="pulse-wrap" aria-hidden="true">
+                <span class="pulse-ring"></span>
+                <span class="pulse-core"></span>
+              </span>
+              <span id="updated">รับสถานะล่าสุด 13:20:00</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="misc-pill" role="region" aria-label="แถบเครื่องมือด่วน">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="search" id="search-input" placeholder="ค้นหางานหรือโมเดล..." aria-label="ค้นหางาน โมเดล หรือเหตุการณ์">
+          </div>
+          <button type="button" class="icon-btn" id="quick-alerts" title="ไปยังการแจ้งเตือน" aria-label="ไปยังการแจ้งเตือน">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5m6 0a3 3 0 1 1-6 0"/></svg>
+            <span class="notif-dot" id="alerts-dot" hidden></span>
+          </button>
+          <button type="button" class="icon-btn" id="quick-theme" title="สลับโหมดสว่าง / มืด" aria-label="สลับโหมดสว่างหรือมืด">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="quick-help" title="คำแนะนำสิ่งที่ควรตรวจ" aria-label="คำแนะนำสิ่งที่ควรตรวจ">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4m0-4h.01"/></svg>
+          </button>
+          <button type="button" class="avatar-btn" id="avatar-badge" title="สลับมุมมองสิทธิ์" aria-label="สลับมุมมองสิทธิ์ผู้ดูแลหรือทีมงาน">N</button>
+        </div>
+      </header>
+
+      <div class="pause-banner" id="pause-banner" hidden>
+        <div>
+          <strong id="pause-banner-title">กำลังพักอีเมลแจ้งเตือนชั่วคราว</strong>
+          <p id="pause-banner-desc">เว็บยังแสดงปัญหาจริงตามปกติ</p>
+        </div>
+        <button type="button" class="button" id="pause-resume-quick">กลับมาแจ้งตอนนี้</button>
+      </div>
+
+      <!-- VIEW 1: OVERVIEW (HORIZON BENTO GRID) -->
+      <div id="view-overview" class="view-pane">
+        <section class="kpi-grid" id="kpi-grid" aria-label="สถานะสำคัญล่าสุด"></section>
+
+        <section class="row-charts" aria-label="กราฟหลักจากหลักฐานล่าสุด">
+          <article class="bento-card" id="rhythm-card">
+            <div class="card-head">
+              <div>
+                <h2>ประวัติการเรียก AI และสถานะเชื่อมต่อ</h2>
+                <p id="rhythm-sub">ดึงจาก status.calls (admin) / /api/history · แยกเหตุการณ์หลุดออกจากแกนวินาที</p>
+              </div>
+              <span class="chip-icon-box" aria-hidden="true"><i class="fi fi-document"></i></span>
+            </div>
+            <div class="filter-row compact-filters" id="rhythm-cap-filters" role="group" aria-label="กรองตามความสามารถ"></div>
+            <div class="conn-strip" id="conn-strip" aria-live="polite"></div>
+            <div class="rhythm-body">
+              <div class="rhythm-summary" id="rhythm-summary"></div>
+              <div class="rhythm-svg-wrap" id="rhythm-chart"></div>
+            </div>
+            <div class="rhythm-foot" id="rhythm-foot" aria-live="polite"></div>
+          </article>
+
+          <article class="bento-card" id="capsule-card">
+            <div class="card-head">
+              <div>
+                <h2 id="capsule-title">เวลาตอบเฉลี่ย 5 ความสามารถ</h2>
+                <p id="capsule-sub">คำนวณจาก status.calls ล่าสุด (admin) · เทียบค่ามาตรฐานแต่ละกลุ่ม</p>
+              </div>
+              <span class="chip-icon-box" aria-hidden="true"><i class="fi fi-wand"></i></span>
+            </div>
+            <div class="capsule-chart" id="capsule-chart"></div>
+          </article>
+        </section>
+
+        <section class="row-mid" aria-label="ตารางความสามารถและคิวงาน">
+          <article class="bento-card">
+            <div class="card-head">
+              <div>
+                <h2>งานและโมเดล AI</h2>
+                <p id="table-hint">คลิกแถวเพื่อดูรายละเอียดและผลตอบกลับด้านล่าง</p>
+              </div>
+              <span class="chip-btn" id="table-count-chip">5 ความสามารถ</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>งาน</th>
+                    <th>สถานะล่าสุด</th>
+                    <th>ผู้ให้บริการ / โมเดล</th>
+                    <th id="table-col4-head">เวลาตอบล่าสุด</th>
+                  </tr>
+                </thead>
+                <tbody id="complex-table-body"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="bento-card" id="traffic-card">
+            <div class="card-head">
+              <div>
+                <p>จากบันทึกเหตุการณ์จริง</p>
+                <h2>จำนวนเหตุการณ์รายชั่วโมง</h2>
+              </div>
+              <span class="chip-btn" id="traffic-badge">ล่าสุด</span>
+            </div>
+            <div class="traffic-stat" id="traffic-stat"></div>
+            <div class="traffic-bars" id="traffic-bars"></div>
+          </article>
+
+          <article class="bento-card" id="pie-card">
+            <div class="card-head">
+              <div>
+                <h2>คิวงานและอายุงานค้าง</h2>
+                <p>งานที่รอทำ · กำลังทำ · งานค้างนานสุด</p>
+              </div>
+              <span class="chip-btn" id="pie-badge">ล่าสุด</span>
+            </div>
+            <div class="pie-center" id="pie-ring"></div>
+            <div class="pie-divider-box" id="pie-stats"></div>
+          </article>
+        </section>
+
+        <section class="row-bottom" aria-label="รายละเอียด คำแนะนำ เหตุการณ์ และทีม">
+          <article class="bento-card" id="detail-card" aria-live="polite"></article>
+
+          <article class="bento-card" id="recent-card">
+            <div class="card-head">
+              <div>
+                <h2>บันทึกเหตุการณ์ล่าสุด</h2>
+                <p>ตัวอย่างตามสถานการณ์ที่เลือก</p>
+              </div>
+              <button type="button" class="chip-btn" id="goto-history-btn">ดู 30 วัน →</button>
+            </div>
+            <div class="event-checklist" id="recent-events"></div>
+          </article>
+
+          <article class="bento-card" id="team-card">
+            <div class="card-head">
+              <div>
+                <h2>สมาชิกทีม</h2>
+                <p>บัญชีที่มีสิทธิ์เข้าดู Warroom</p>
+              </div>
+              <button type="button" class="chip-icon-box" id="goto-members-btn" title="จัดการสมาชิก" aria-label="ไปหน้าจัดการสมาชิก">+</button>
+            </div>
+            <div class="team-list" id="team-preview"></div>
+          </article>
+        </section>
+      </div>
+
+      <!-- VIEW 2: HISTORY -->
+      <div id="view-history" class="view-pane" hidden>
+        <section class="bento-card">
+          <div class="card-head">
+            <div>
+              <h2>เหตุการณ์ที่บอทส่งเข้ามา (30 วัน)</h2>
+              <p>ใช้ช่องค้นหาด้านบนหรือปุ่มกรองเพื่อดูเฉพาะประเภทเหตุการณ์</p>
+            </div>
+            <span class="chip-btn" id="history-count-chip">ทั้งหมด</span>
+          </div>
+          <div class="filter-row" id="history-filters" role="group" aria-label="กรองประเภทเหตุการณ์"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>เวลา (Bangkok)</th>
+                  <th>เหตุการณ์</th>
+                  <th>งาน / ความสามารถ</th>
+                  <th>หลักฐานและรายละเอียด</th>
+                </tr>
+              </thead>
+              <tbody id="history-rows"></tbody>
+            </table>
+          </div>
+          <p class="panel-note" id="history-note"></p>
+        </section>
+      </div>
+
+      <!-- VIEW 3: SETTINGS / ALERTS -->
+      <div id="view-settings" class="view-pane" hidden>
+        <div id="settings-content"></div>
+      </div>
+
+      <!-- VIEW 4: MEMBERS -->
+      <div id="view-members" class="view-pane" hidden>
+        <div id="members-content"></div>
+      </div>
+
+      <p class="footer">
+        SOUVANNARATH ARCHITECT · ข้อมูลการทำงานเท่านั้น · ไม่แสดงเนื้อหาแชท · Uicons by <a href="https://www.flaticon.com/uicons">Flaticon</a>
+      </p>
+    </main>
+  </div>
+
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <h2 id="dialog-title">ลองตรวจทีละจุด</h2>
+    <p id="dialog-description"></p>
+    <ol id="steps"></ol>
+    <div class="dialog-actions">
+      <button type="button" class="button" id="dialog-history">ดูประวัติเหตุการณ์ →</button>
+      <button type="button" class="button" id="dialog-pause">พักแจ้งเตือนชั่วคราว →</button>
+      <button type="button" class="button button-primary" id="close">เข้าใจแล้ว</button>
+    </div>
+  </dialog>
+</body>
+</html>
