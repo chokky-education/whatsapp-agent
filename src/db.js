@@ -692,14 +692,112 @@ export function openTasks(groupJid) {
     .all(groupJid);
 }
 
-export function setTaskStatus(id, status, by = null) {
+export function closedTasksBetween(groupJid, from, to) {
+  return db
+    .prepare(
+      `SELECT t.*, c.name AS client_name
+       FROM tasks t LEFT JOIN clients c ON c.id = t.client_id
+       WHERE t.group_jid = ? AND t.status IN ('done', 'cancelled') AND t.done_at BETWEEN ? AND ?
+       ORDER BY t.done_at, t.id`,
+    )
+    .all(groupJid, from, to);
+}
+
+export function setTaskStatus(id, status, by = null, at = now()) {
   db.prepare('UPDATE tasks SET status = ?, done_at = ?, done_by = ? WHERE id = ?').run(
     status,
-    status === 'open' ? null : now(),
+    status === 'open' ? null : at,
     by,
     id,
   );
   if (status !== 'open') db.prepare('UPDATE reminders SET active = 0 WHERE task_id = ? AND repeat = ?').run(id, 'none');
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS work_group_epochs (
+    group_jid TEXT PRIMARY KEY,
+    epoch INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS work_bridge_sequences (
+    pilot TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS work_receipts (
+    pilot TEXT NOT NULL,
+    group_jid TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    result TEXT NOT NULL,
+    reason TEXT,
+    done_at INTEGER,
+    recorded_at INTEGER NOT NULL,
+    published INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(pilot,request_id)
+  );
+`);
+
+export function workEpoch(groupJid) {
+  return db.prepare('SELECT epoch FROM work_group_epochs WHERE group_jid=?').get(groupJid)?.epoch ?? 0;
+}
+
+export function nextWorkRevision(pilot) {
+  return db.prepare(`
+    INSERT INTO work_bridge_sequences(pilot,revision) VALUES(?,1)
+    ON CONFLICT(pilot) DO UPDATE SET revision=revision+1 RETURNING revision
+  `).get(pilot).revision;
+}
+
+export function workTasks(groupJid, dayStart, at) {
+  return db.prepare(`
+    SELECT t.id,t.title,t.assignee_name,t.assignee_jid,t.due_at,t.done_at,
+      c.id AS project_id,c.name AS project
+    FROM tasks t LEFT JOIN clients c ON c.id=t.client_id AND c.group_jid=t.group_jid
+    WHERE t.group_jid=? AND (t.status='open' OR (t.status='done' AND t.done_at BETWEEN ? AND ?))
+    ORDER BY t.id
+  `).all(groupJid, dayStart, at);
+}
+
+export function pendingWorkReceipts(pilot, groupJid, epoch, since, limit) {
+  db.prepare('DELETE FROM work_receipts WHERE pilot=? AND recorded_at<?').run(pilot, since);
+  return db.prepare(`
+    SELECT request_id AS requestId,result,reason,done_at AS doneAt FROM work_receipts
+    WHERE pilot=? AND group_jid=? AND epoch=? AND published=0 ORDER BY recorded_at LIMIT ?
+  `).all(pilot, groupJid, epoch, limit);
+}
+
+export function acknowledgeWorkReceipts(pilot, ids) {
+  const mark = db.prepare('UPDATE work_receipts SET published=1 WHERE pilot=? AND request_id=?');
+  for (const id of ids) mark.run(pilot, id);
+}
+
+// The task, its one-off reminder and the durable outcome commit together.
+export function applyWorkCompletion(pilot, groupJid, command, acceptsAssignee, { at = Date.now(), rejection = null } = {}) {
+  if (command.epoch !== workEpoch(groupJid)) return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const previous = db.prepare('SELECT 1 FROM work_receipts WHERE pilot=? AND request_id=?')
+      .get(pilot, command.requestId);
+    if (!previous) {
+      const task = getTask(command.taskId);
+      let reason = rejection;
+      if (at >= command.expiresAt) reason = 'expired';
+      else if (!task || task.group_jid !== groupJid) reason = 'missing';
+      else if (!acceptsAssignee(task.assignee_jid)) reason ||= 'reassigned';
+      else if (task.status === 'cancelled') reason ||= 'closed';
+      const applied = !reason && task.status === 'open';
+      const doneAt = applied ? Math.floor(at / 1000) : task?.done_at;
+      if (applied) setTaskStatus(task.id, 'done', task.assignee_name || null, doneAt);
+      db.prepare(`
+        INSERT INTO work_receipts(pilot,group_jid,epoch,request_id,result,reason,done_at,recorded_at)
+        VALUES(?,?,?,?,?,?,?,?)
+      `).run(pilot, groupJid, command.epoch, command.requestId,
+        reason ? 'rejected' : applied ? 'applied' : 'already_done', reason, reason ? null : doneAt * 1000, at);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function updateTask(id, fields) {
@@ -797,6 +895,18 @@ export function setDayMarker(groupJid, col, day) {
   ).run(groupJid, day);
 }
 
+export function recordDailySummary(groupJid, day, start, end, text) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (end != null) saveSummary(groupJid, start, end, text);
+    setDayMarker(groupJid, 'last_summary_day', day);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export function lastTaskRow(groupJid) {
   return db.prepare('SELECT last_task_row FROM group_state WHERE group_jid = ?').get(groupJid)?.last_task_row ?? 0;
 }
@@ -888,11 +998,14 @@ export function deleteGroupData(groupJid, through) {
       'client_renders',
       'bot_messages',
       'group_state',
+      'work_receipts',
     ]) {
       db.prepare(`DELETE FROM ${table} WHERE group_jid = ?`).run(groupJid);
     }
     db.prepare(`INSERT INTO group_privacy VALUES (?, ?) ON CONFLICT(group_jid)
       DO UPDATE SET deleted_through = max(deleted_through, excluded.deleted_through)`).run(groupJid, through);
+    db.prepare(`INSERT INTO work_group_epochs VALUES (?,1)
+      ON CONFLICT(group_jid) DO UPDATE SET epoch=epoch+1`).run(groupJid);
     db.exec('COMMIT');
     return count;
   } catch (err) {

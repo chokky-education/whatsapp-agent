@@ -1,0 +1,8 @@
+# ค่าจริงเก็บใน .dev.vars หรือ Cloudflare secrets เท่านั้น
+GOOGLE_CLIENT_ID=
+ADMIN_EMAIL=
+WARROOM_INGEST_TOKEN=
+ALERT_TO=
+ALERT_FROM=
+ALERTS_ENABLED=false
+PUBLIC_URL=

@@ -778,6 +778,7 @@ export async function syncTasks(groupJid, people, resolve) {
     .slice(-10);
 
   const result = await askJSON({
+    capability: 'task_sync',
     system: SYNC_SYSTEM,
     name: 'task_sync',
     schema: SYNC_SCHEMA,

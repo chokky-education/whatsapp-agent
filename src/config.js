@@ -18,6 +18,12 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(root, 'data', 'messages.db'),
   outputDir: path.join(root, 'output'),
 
+  // Optional external status reporting. Never include chat contents.
+  warroomUrl: process.env.WARROOM_URL || '',
+  warroomToken: process.env.WARROOM_INGEST_TOKEN || '',
+  workToken: process.env.WARROOM_WORK_TOKEN || '',
+  workPairingFile: process.env.WARROOM_WORK_CONFIG || path.join(root, 'data', 'warroom-work.local.json'),
+
   // AI provider: "openai" or "claude". Without AI_PROVIDER: Claude only if just an Anthropic key is set.
   provider: (
     process.env.AI_PROVIDER ||

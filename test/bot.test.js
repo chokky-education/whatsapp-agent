@@ -577,27 +577,70 @@ test('a reminder sent late says when it was meant for', async () => {
   assert.doesNotMatch(sent.at(-1).text, /ส่งช้า/);
 });
 
-test('a scheduled summary missed while off is sent once on restart', async (t) => {
-  const mins = tasks.localMinutes();
-  if (mins < 2 || mins > 22 * 60 + 50) return t.skip('needs a time between 00:02 and 22:50');
+test('the evening report uses the full Bangkok day and retries an unsuccessful send', async (t) => {
   reset();
-  const saved = { s: config.summaryCron, b: config.briefingCron };
-  const m = mins - 1;
-  config.summaryCron = `${m % 60} ${Math.floor(m / 60)} * * *`; // "missed" one minute ago
-  config.briefingCron = '';
-  await say(NOK, 'ข้อความสำหรับสรุป');
-  await bot.flushTaskSync(G);
-  reset();
+  const groupJid = '120363000000000003@g.us';
+  const groupName = 'EXAMPLE STUDIO';
+  const day = '2025-11-18';
+  const midnight = tasks.parseLocal(`${day} 00:00`);
+  const reportTime = tasks.parseLocal(`${day} 18:06`);
+  const previousConfig = { summaryCron: config.summaryCron, briefingCron: config.briefingCron, watchGroups: config.watchGroups };
+  const previousAsk = _stub.ask;
+  t.after(() => {
+    Object.assign(config, previousConfig);
+    _stub.ask = previousAsk;
+    bot.setSocket(fakeSock);
+  });
+  Object.assign(config, { summaryCron: '0 18 * * *', briefingCron: '', watchGroups: [groupName] });
+  t.mock.method(Date, 'now', () => reportTime * 1000);
+
+  for (const [id, group, ts, text] of [
+    ['PREV_DAY', groupJid, midnight - 1, 'ข้อความของเมื่อวาน'],
+    ['MORNING', groupJid, midnight, 'ส่งแบบครัวเสร็จแล้ว'],
+    ['AFTERNOON', groupJid, reportTime - 60, 'ตกลงใช้ไม้สีอ่อน'],
+    ['FUTURE', groupJid, reportTime + 1, 'ข้อความหลังตัดยอด'],
+    ['FOREIGN', G2, reportTime - 60, 'อัปเดตอีกกลุ่ม'],
+  ]) {
+    db.saveMessage({ id, groupJid: group, groupName: group === groupJid ? groupName : 'OTHER GROUP',
+      ts, kind: 'text', text, senderName: 'Nok' });
+  }
+  db.saveSummary(groupJid, midnight, midnight + 43200, 'สรุปเที่ยงแบบเดิม');
+  const closedId = db.addTask({ groupJid, title: 'วัดพื้นที่หน้างาน', assigneeName: 'Somchai' });
+  db.updateTask(closedId, { created_at: midnight - 86400 });
+  db.setTaskStatus(closedId, 'done');
+  const openId = db.addTask({ groupJid, title: 'เช็กราคาไม้' });
+  db.saveMessage({ id: 'MISSED_DONE', groupJid, groupName, ts: reportTime - 60, kind: 'text', text: `/เสร็จ ${openId}` });
+
+  _stub.ask = async (prompt) => {
+    aiCalls.push(prompt);
+    return '*เสร็จแล้ว*\n- Nok แจ้งว่าส่งแบบครัวแล้ว';
+  };
+  bot.setSocket({ ...fakeSock, sendMessage: async () => { throw new Error('temporary send failure'); } });
   await bot.catchUp();
-  await bot.flushTaskSync(G);
-  const summaries = sent.filter((x) => x.text === 'สรุปทดสอบ');
-  assert.equal(summaries.length, 1);
+  await bot.flushTaskSync(groupJid);
+  assert.equal(db.dayMarker(groupJid, 'last_summary_day'), null);
+
+  bot.setSocket(fakeSock);
+  await bot.retryScheduledSummary(reportTime);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].jid, groupJid);
+  assert.match(sent[0].text, /รายงานประจำวัน EXAMPLE STUDIO/);
+  assert.match(sent[0].text, /00:00–18:06/);
+  assert.equal(db.dayMarker(groupJid, 'last_summary_day'), day);
+  assert.equal(db.getTask(openId).status, 'open');
+  assert.equal(aiCalls.length, 2);
+  const { text } = aiCalls.at(-1);
+  assert.match(text, /ส่งแบบครัวเสร็จแล้ว/);
+  assert.match(text, /ตกลงใช้ไม้สีอ่อน/);
+  assert.match(text, /วัดพื้นที่หน้างาน.*"status":"done"/);
+  assert.match(text, /เช็กราคาไม้.*"status":"open"/);
+  assert.match(text, new RegExp(`/เสร็จ ${openId}`));
+  assert.doesNotMatch(text, /ข้อความของเมื่อวาน|ข้อความหลังตัดยอด|อัปเดตอีกกลุ่ม|สรุปเที่ยงแบบเดิม/);
+
   reset();
-  await bot.catchUp(); // already done today
-  await bot.flushTaskSync(G);
-  assert.equal(sent.filter((x) => x.text === 'สรุปทดสอบ').length, 0);
-  config.summaryCron = saved.s;
-  config.briefingCron = saved.b;
+  await bot.retryScheduledSummary(reportTime + 300);
+  assert.equal(sent.length, 0);
+  assert.equal(aiCalls.length, 0);
 });
 
 

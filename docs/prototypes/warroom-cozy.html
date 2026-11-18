@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warroom · สุขภาพบอท (Cozy Café Prototype)</title>
+  <link rel="stylesheet" href="/warroom-cozy.css">
+  <script defer src="/warroom-cozy.js"></script>
+</head>
+<body>
+  <div class="demo">
+    <strong>แบบทดลอง Cozy Café · ข้อมูลสมมติทั้งหมด</strong>
+    <div class="demo-controls">
+      <label>
+        สถานการณ์
+        <select id="scenario">
+          <option value="problem">WhatsApp หลุด</option>
+          <option value="healthy">เชื่อมต่อได้</option>
+          <option value="stale">ข้อมูลเก่า</option>
+          <option value="empty">ยังไม่มีข้อมูล</option>
+          <option value="ai">AI สรุปมีปัญหา</option>
+        </select>
+      </label>
+      <label>
+        มุมมองสิทธิ์
+        <select id="role">
+          <option value="admin">ผู้ดูแล (Admin)</option>
+          <option value="member">ทีมงาน (Member)</option>
+        </select>
+      </label>
+      <label>
+        โทนสี
+        <select id="theme">
+          <option value="auto">ตามระบบ</option>
+          <option value="light">สว่าง (Oat &amp; Café)</option>
+          <option value="dark">มืด (Evening Roast)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <div>
+          Warroom
+          <small>สถานะบอทของทีม</small>
+        </div>
+      </div>
+      <nav aria-label="เมนูหลักของ Warroom" id="nav">
+        <button type="button" class="nav-btn" data-view="overview" aria-current="page">
+          <span>ภาพรวม</span>
+          <small>สถานะล่าสุดและงาน</small>
+        </button>
+        <button type="button" class="nav-btn" data-view="history">
+          <span>ประวัติ</span>
+          <small id="nav-history-sub">เหตุการณ์ย้อนหลัง 30 วัน</small>
+        </button>
+        <button type="button" class="nav-btn" data-view="settings">
+          <span>การแจ้งเตือน</span>
+          <small id="nav-settings-sub">พักเตือนและสถานะอีเมล</small>
+        </button>
+        <button type="button" class="nav-btn" data-view="members">
+          <span>สมาชิก</span>
+          <small id="nav-members-sub">บัญชีทีมและผู้ดูแล</small>
+        </button>
+      </nav>
+      <div class="foot">
+        บัญชีตัวอย่าง<br>
+        <strong id="account-label">Nok · ผู้ดูแล</strong>
+        <p>ข้อมูลในหน้านี้เป็นตัวอย่าง</p>
+      </div>
+    </aside>
+
+    <main>
+      <div class="top">
+        <strong id="view-kicker">ภาพรวมบอท</strong>
+        <span class="live-stamp">
+          <span class="pulse-wrap" id="pulse" aria-hidden="true">
+            <span class="pulse-ring"></span>
+            <span class="pulse-core"></span>
+          </span>
+          <span id="updated">รับสถานะล่าสุด 13:20:00</span>
+        </span>
+      </div>
+
+      <div class="pause-banner" id="pause-banner" hidden>
+        <div>
+          <strong id="pause-banner-title">กำลังพักอีเมลแจ้งเตือนชั่วคราว</strong>
+          <p id="pause-banner-desc">เว็บยังแสดงสถานะปัญหาจริงตามปกติ</p>
+        </div>
+        <button type="button" class="button" id="pause-resume-quick">กลับมาแจ้งตอนนี้</button>
+      </div>
+
+      <!-- VIEW 1: OVERVIEW -->
+      <div id="view-overview" class="view-pane">
+        <div class="title">
+          <div>
+            <h1>สุขภาพบอทวันนี้</h1>
+            <p>แวะมาดูจังหวะการทำงานของบอทและหลักฐานล่าสุดแบบสบายตา</p>
+          </div>
+          <span class="date-chip">16 พฤศจิกายน · เวลา Bangkok</span>
+        </div>
+
+        <section class="overview" aria-labelledby="overview-title">
+          <div class="overview-head">
+            <div>
+              <div class="eyebrow">ภาพรวมล่าสุด</div>
+              <h2 id="overview-title"></h2>
+              <p id="overview-description"></p>
+            </div>
+            <div class="symbol" id="symbol" aria-hidden="true"></div>
+          </div>
+          <div class="evidence" id="evidence"></div>
+        </section>
+
+        <div class="guidance">
+          <div>
+            <strong id="advice-title"></strong>
+            <p id="advice-description"></p>
+          </div>
+          <button type="button" class="button" id="advice-button">สิ่งที่ควรตรวจ →</button>
+        </div>
+
+        <section class="section" aria-labelledby="graphs-heading">
+          <div class="section-head">
+            <div>
+              <h2 id="graphs-heading">จังหวะการทำงานจากหลักฐานล่าสุด</h2>
+              <p>แสดงเฉพาะเหตุการณ์ที่บอทส่งเข้ามา ช่วงที่ไม่มีข้อมูลจะเว้นเป็นเส้นประ ไม่เดาสถานะต่อเนื่อง</p>
+            </div>
+            <button type="button" class="link-button" id="goto-history-link">ดูประวัติ 30 วัน →</button>
+          </div>
+
+          <div class="graphs-grid">
+            <article class="graph-card rhythm-card" aria-labelledby="rhythm-heading">
+              <div class="graph-head">
+                <div>
+                  <h3 id="rhythm-heading">ความเร็วตอบกลับของ AI รายครั้ง (วินาที)</h3>
+                  <p>คลิกหรือโฟกัสที่จุดเพื่อดูเวลา งาน และเชื่อมต่อไปยังความสามารถด้านล่าง</p>
+                </div>
+                <span class="graph-badge" id="rhythm-badge">6 เหตุการณ์ล่าสุด</span>
+              </div>
+              <div class="rhythm-stage" id="rhythm-chart"></div>
+              <div class="chart-tooltip" id="rhythm-tooltip" aria-live="polite"></div>
+              <div class="rhythm-legend" id="rhythm-legend"></div>
+            </article>
+
+            <article class="graph-card queue-card" aria-labelledby="queue-heading">
+              <div class="graph-head">
+                <div>
+                  <h3 id="queue-heading">คิวงานปัจจุบัน</h3>
+                  <p>แยกตามคิวในระบบบอท</p>
+                </div>
+                <span class="graph-badge" id="queue-badge">ล่าสุด</span>
+              </div>
+              <div class="queue-body">
+                <div class="ring-wrap" id="queue-ring"></div>
+                <div class="queue-legend" id="queue-legend"></div>
+              </div>
+              <p class="queue-foot" id="queue-foot"></p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="cap-heading">
+          <div class="section-head">
+            <div>
+              <h2 id="cap-heading">บอทช่วยทำอะไรอยู่</h2>
+              <p id="capability-hint">แถบความเร็วเทียบกับค่ามาตรฐานของแต่ละกลุ่มงาน (ข้อความ ~6 วิ · งานภาพ ~15 วิ)</p>
+            </div>
+            <span class="tag-muted" id="role-hint">มุมมองผู้ดูแล</span>
+          </div>
+
+          <div class="capability-workspace">
+            <div class="capabilities" id="capabilities" role="group" aria-label="เลือกงานของบอท" aria-describedby="capability-hint"></div>
+            <div class="details" id="details" aria-live="polite"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- VIEW 2: HISTORY -->
+      <div id="view-history" class="view-pane" hidden>
+        <div class="title">
+          <div>
+            <h1>ประวัติการทำงาน</h1>
+            <p>ย้อนดูเหตุการณ์ที่บอทส่งเข้ามา (เก็บย้อนหลัง 30 วัน · ไม่เก็บเนื้อหาแชท)</p>
+          </div>
+          <span class="date-chip">ข้อมูลตัวอย่างตามสถานการณ์</span>
+        </div>
+
+        <section class="panel-card">
+          <div class="filter-row" id="history-filters" role="group" aria-label="กรองประเภทเหตุการณ์"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>เวลา (Bangkok)</th>
+                  <th>เหตุการณ์</th>
+                  <th>งาน / ความสามารถ</th>
+                  <th>หลักฐานและรายละเอียด</th>
+                </tr>
+              </thead>
+              <tbody id="history-rows"></tbody>
+            </table>
+          </div>
+          <p class="panel-note" id="history-note"></p>
+        </section>
+      </div>
+
+      <!-- VIEW 3: SETTINGS / ALERTS -->
+      <div id="view-settings" class="view-pane" hidden>
+        <div class="title">
+          <div>
+            <h1>การแจ้งเตือน</h1>
+            <p>จัดการช่วงพักอีเมลชั่วคราว และตรวจสถานะการส่งแจ้งเตือน (สำหรับผู้ดูแล)</p>
+          </div>
+          <span class="date-chip" id="settings-role-chip">สิทธิ์ผู้ดูแล</span>
+        </div>
+        <div id="settings-content"></div>
+      </div>
+
+      <!-- VIEW 4: MEMBERS -->
+      <div id="view-members" class="view-pane" hidden>
+        <div class="title">
+          <div>
+            <h1>สมาชิกและสิทธิ์</h1>
+            <p>เฉพาะบัญชีที่เพิ่มไว้เท่านั้นที่เข้าดู Warroom ได้ (สำหรับผู้ดูแล)</p>
+          </div>
+          <span class="date-chip" id="members-role-chip">สิทธิ์ผู้ดูแล</span>
+        </div>
+        <div id="members-content"></div>
+      </div>
+
+      <p class="footer">
+        ข้อมูลการทำงานเท่านั้น · ไม่แสดงเนื้อหาแชท · Uicons by <a href="https://www.flaticon.com/uicons">Flaticon</a>
+      </p>
+    </main>
+  </div>
+
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <h2 id="dialog-title">ลองตรวจทีละจุด</h2>
+    <p id="dialog-description"></p>
+    <ol id="steps"></ol>
+    <div class="dialog-actions">
+      <button type="button" class="button" id="dialog-history">ดูประวัติเหตุการณ์ →</button>
+      <button type="button" class="button" id="dialog-pause">พักแจ้งเตือนชั่วคราว →</button>
+      <button type="button" class="button button-primary" id="close">เข้าใจแล้ว</button>
+    </div>
+  </dialog>
+</body>
+</html>

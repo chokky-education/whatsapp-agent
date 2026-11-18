@@ -1,0 +1,175 @@
+.work-shell {
+  display: grid;
+  grid-template-columns: 218px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.work-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding: 28px 16px 18px;
+  height: 100dvh;
+  border: 0;
+  border-inline-end: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.work-brand { display: block; padding-inline: 8px; width: fit-content; }
+.work-logo { display: block; max-width: 100%; object-fit: contain; }
+.work-logo-night { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  .work-logo-day { display: none; }
+  .work-logo-night { display: block; }
+}
+
+.work-nav { display: grid; gap: 4px; margin: 0; }
+.work-nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  color: var(--secondary);
+  text-decoration: none;
+  font-size: .92rem;
+}
+
+.work-nav a:hover,
+.work-nav a[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+.work-nav a[aria-current="page"] { font-weight: 600; }
+.work-nav svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.work-account {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 8px 4px;
+  border-top: 1px solid var(--border);
+  font-size: .88rem;
+}
+
+.work-account small { display: block; color: var(--secondary); }
+.work-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-soft);
+}
+
+.work-main {
+  width: 100%;
+  max-width: 1520px;
+  margin-inline: auto;
+  padding: 20px clamp(20px, 3vw, 48px) 48px;
+  outline: none;
+}
+
+.work-demo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: .78rem;
+  color: var(--secondary);
+}
+
+.work-demo > span { display: inline-flex; align-items: center; gap: 7px; margin-inline-end: auto; }
+.work-scenario { display: flex; align-items: center; gap: 8px; }
+.work-demo strong { color: var(--text); }
+.work-demo-separator { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
+.work-demo select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.work-demo select { min-height: 36px; }
+.work-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 30px 0 20px;
+}
+
+.work-heading h1 { font-size: clamp(1.65rem, 3.3vw, 2.6rem); line-height: 1.25; }
+.work-heading p { margin-top: 5px; font-size: .92rem; color: var(--secondary); }
+.work-sync {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 2px;
+  font-size: .8rem;
+  color: var(--secondary);
+}
+
+.work-sync::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.work-sync[data-offline]::before { background: var(--warning); }
+@media (max-width: 900px) {
+  .work-shell { display: block; }
+  .work-sidebar {
+    position: static;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 12px;
+    height: auto;
+    padding: 6px 14px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .work-brand { padding: 0; }
+  .work-logo { width: clamp(96px, 32vw, 130px); height: auto; }
+  .work-nav { display: flex; flex-direction: row; flex-wrap: wrap; gap: 3px; margin-inline-start: auto; }
+  .work-nav a { padding: 6px 8px; font-size: .8rem; min-height: 44px; gap: 5px; }
+  .work-nav svg { width: 15px; height: 15px; }
+  .work-account { display: none; }
+  .work-main { padding: 14px 16px 32px; }
+}
+
+@media (max-width: 660px) {
+  .work-header { margin: 19px 0 14px; gap: 4px 12px; }
+  .work-heading p { margin-top: 2px; font-size: .82rem; }
+}
+
+@media (max-width: 440px) {
+  .work-scenario > span { position: absolute; clip-path: inset(50%); }
+}

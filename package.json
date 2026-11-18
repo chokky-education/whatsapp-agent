@@ -9,7 +9,10 @@
     "summarize-export": "node src/export-cli.js",
     "test": "node --test test/*.test.js",
     "index": "node scripts/index.mjs",
-    "autostart": "bash scripts/autostart.sh"
+    "autostart": "bash scripts/autostart.sh",
+    "warroom:dev": "node warroom/dev.mjs",
+    "warroom:build": "node warroom/build.mjs",
+    "warroom:test": "node --test warroom/test/*.test.js"
   },
   "engines": {
     "node": ">=22.5"
@@ -19,10 +22,14 @@
     "adm-zip": "^0.6.1",
     "baileys": "^7.0.0-rc14",
     "dotenv": "^18.0.9",
+    "jose": "^6.2.17",
     "node-cron": "^4.6.0",
     "openai": "^7.53.0",
     "pino": "^10.4.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

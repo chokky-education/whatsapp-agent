@@ -5,3 +5,7 @@ output/
 .local-index/
 eval/
 logs/
+.playwright-cli/
+
+.DS_Store
+/docs/warroom-conversation-handoff-*.md

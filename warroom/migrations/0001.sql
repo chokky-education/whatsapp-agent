@@ -1,0 +1,17 @@
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS members (email TEXT PRIMARY KEY COLLATE NOCASE, sub TEXT UNIQUE, role TEXT NOT NULL CHECK(role IN ('team','admin')), created_at INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS last_admin_delete BEFORE DELETE ON members WHEN OLD.role='admin' AND (SELECT COUNT(*) FROM members WHERE role='admin')=1 BEGIN SELECT RAISE(ABORT,'last_admin'); END;
+CREATE TRIGGER IF NOT EXISTS last_admin_update BEFORE UPDATE OF role ON members WHEN OLD.role='admin' AND NEW.role!='admin' AND (SELECT COUNT(*) FROM members WHERE role='admin')=1 BEGIN SELECT RAISE(ABORT,'last_admin'); END;
+CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, email TEXT NOT NULL REFERENCES members(email) ON DELETE CASCADE, csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS challenges (nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS live (id INTEGER PRIMARY KEY CHECK(id=1), run_id TEXT NOT NULL, seq INTEGER NOT NULL, started_at INTEGER NOT NULL, generated_at INTEGER NOT NULL, received_at INTEGER NOT NULL, snapshot TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, capability TEXT, at INTEGER NOT NULL, received_at INTEGER NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS event_at ON events(at DESC);
+CREATE INDEX IF NOT EXISTS event_capability ON events(capability, at DESC);
+CREATE TABLE IF NOT EXISTS incidents (key TEXT PRIMARY KEY, opened_at INTEGER NOT NULL, changed_at INTEGER NOT NULL, active INTEGER NOT NULL, next_at INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0, error TEXT);
+CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, incident_key TEXT NOT NULL, opened_at INTEGER NOT NULL, kind TEXT NOT NULL, created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', lease_until INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, error TEXT);
+CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(status,lease_until,created_at);
+CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS audit_at ON audit(at DESC);
